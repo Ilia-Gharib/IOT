@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>کنترل صوتی ساختمان هوشمند</title>
+  <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
+  <style>
+    :root {
+      --bg-primary: #090d16;
+      --bg-card: rgba(30, 41, 59, 0.65);
+      --border-card: rgba(148, 163, 184, 0.14);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent-blue: #38bdf8;
+      --accent-purple: #818cf8;
+      --accent-green: #34d399;
+      --accent-amber: #fbbf24;
+      --accent-red: #f87171;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    body {
+      font-family: 'Vazirmatn', system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at 50% 0%, #1e293b 0%, var(--bg-primary) 70%);
+      color: var(--text-main);
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 1.25rem;
+      overflow-x: hidden;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border-card);
+    }
+
+    .header-title h1 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    .header-title p {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 0.15rem;
+    }
+
+    .connection-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.75rem;
+      background: rgba(52, 211, 153, 0.12);
+      color: var(--accent-green);
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      border: 1px solid rgba(52, 211, 153, 0.3);
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 8px currentColor;
+    }
+
+    /* Status Stepper Banner */
+    .status-banner {
+      margin-top: 1.1rem;
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-card);
+      border-radius: 1rem;
+      padding: 0.9rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: all 0.3s ease;
+    }
+
+    .status-left {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .status-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      transition: all 0.3s ease;
+    }
+
+    .status-text {
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .status-step-tag {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      background: rgba(15, 23, 42, 0.6);
+      padding: 0.25rem 0.6rem;
+      border-radius: 0.5rem;
+      font-family: monospace;
+      direction: ltr;
+    }
+
+    /* Dynamic State Colors */
+    body[data-state="listening"] .status-indicator {
+      background: var(--accent-red);
+      box-shadow: 0 0 12px var(--accent-red);
+      animation: blink 1s infinite;
+    }
+    body[data-state="transcribing"] .status-indicator,
+    body[data-state="reasoning"] .status-indicator,
+    body[data-state="executing"] .status-indicator {
+      background: var(--accent-amber);
+      box-shadow: 0 0 12px var(--accent-amber);
+      animation: pulse-amber 1.2s infinite;
+    }
+    body[data-state="playing"] .status-indicator {
+      background: var(--accent-green);
+      box-shadow: 0 0 12px var(--accent-green);
+    }
+
+    /* Main Telemetry Cards */
+    .dashboard {
+      margin: 1.1rem 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+      flex: 1;
+    }
+
+    .card {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-card);
+      border-radius: 1rem;
+      padding: 1rem;
+    }
+
+    .card-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 0.4rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .transcript-box {
+      font-size: 1rem;
+      font-weight: 500;
+      line-height: 1.6;
+      min-height: 1.6rem;
+      color: var(--text-main);
+    }
+
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 0.75rem;
+    }
+
+    .metric-box {
+      background: rgba(15, 23, 42, 0.55);
+      border: 1px solid rgba(148, 163, 184, 0.1);
+      border-radius: 0.85rem;
+      padding: 0.8rem;
+    }
+
+    .metric-title {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin-bottom: 0.3rem;
+    }
+
+    .metric-value {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--accent-blue);
+      word-break: break-all;
+    }
+
+    .metric-value.ltr {
+      direction: ltr;
+      text-align: right;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.85rem;
+    }
+
+    .response-message {
+      font-size: 0.92rem;
+      color: var(--accent-green);
+      line-height: 1.6;
+      margin-top: 0.25rem;
+    }
+
+    /* Hold-to-Talk Mic Section */
+    .mic-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 1.2rem 0 0.5rem;
+      position: relative;
+    }
+
+    .mic-wrapper {
+      position: relative;
+      width: 110px;
+      height: 110px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .pulse-ring {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 2px solid var(--accent-blue);
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    body[data-state="listening"] .pulse-ring {
+      border-color: var(--accent-red);
+      animation: ripple 1.5s infinite cubic-bezier(0.2, 0.8, 0.4, 1);
+    }
+
+    body[data-state="playing"] .pulse-ring {
+      border-color: var(--accent-green);
+      animation: ripple 1.8s infinite cubic-bezier(0.2, 0.8, 0.4, 1);
+    }
+
+    .mic-btn {
+      width: 88px;
+      height: 88px;
+      border-radius: 50%;
+      border: none;
+      background: linear-gradient(135deg, #0284c7, #4f46e5);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 10px 25px rgba(56, 189, 248, 0.3);
+      cursor: pointer;
+      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s ease, box-shadow 0.3s ease;
+      z-index: 2;
+      touch-action: none;
+    }
+
+    .mic-btn:active,
+    body[data-state="listening"] .mic-btn {
+      transform: scale(1.12);
+      background: linear-gradient(135deg, #ef4444, #be123c);
+      box-shadow: 0 12px 30px rgba(239, 68, 68, 0.45);
+    }
+
+    .mic-btn svg {
+      width: 36px;
+      height: 36px;
+      fill: currentColor;
+    }
+
+    .mic-hint {
+      margin-top: 0.9rem;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    @keyframes ripple {
+      0% { transform: scale(0.85); opacity: 0.85; }
+      100% { transform: scale(1.65); opacity: 0; }
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+
+    @keyframes pulse-amber {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.25); }
+    }
+  </style>
+</head>
+<body data-state="idle">
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-title">
+      <h1>دستیار صوتی ساختمان هوشمند</h1>
+      <p>پردازش کاملاً محلی (Whisper + Qwen + HA)</p>
+    </div>
+    <div class="connection-badge">
+      <span class="dot"></span>
+      <span>شبکه محلی فعال</span>
+    </div>
+  </header>
+
+  <!-- Real-time Status Transition Bar -->
+  <section class="status-banner">
+    <div class="status-left">
+      <div class="status-indicator"></div>
+      <span class="status-text" id="statusText">آماده دریافت فرمان صوتی</span>
+    </div>
+    <span class="status-step-tag" id="statusTag">IDLE</span>
+  </section>
+
+  <!-- Real-time Telemetry Dashboard -->
+  <main class="dashboard">
+    <div class="card">
+      <div class="card-label">
+        <span>متن تشخیص داده شده (Faster-Whisper)</span>
+      </div>
+      <div class="transcript-box" id="transcriptText">دکمه میکروفون را نگه دارید و فرمان خود را بگویید...</div>
+    </div>
+
+    <div class="telemetry-grid">
+      <div class="metric-box">
+        <div class="metric-title">طبقه هدف (Floor)</div>
+        <div class="metric-value" id="floorValue">—</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-title">وضعیت اجرا (HA State)</div>
+        <div class="metric-value" id="actionValue">—</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-title">دامنه و سرویس (Service)</div>
+        <div class="metric-value ltr" id="serviceValue">—</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-title">شناسه تجهیز (Entity ID)</div>
+        <div class="metric-value ltr" id="entityValue">—</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">
+        <span>پاسخ سیستم و بازخورد صوتی (Qwen + Edge-TTS)</span>
+      </div>
+      <div class="response-message" id="responseMessage">در انتظار فرمان...</div>
+    </div>
+  </main>
+
+  <!-- Hold-to-Talk Control -->
+  <footer class="mic-container">
+    <div class="mic-wrapper">
+      <div class="pulse-ring"></div>
+      <button class="mic-btn" id="micBtn" aria-label="نگه دارید و صحبت کنید">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/>
+        </svg>
+      </button>
+    </div>
+    <p class="mic-hint" id="micHint">نگه دارید، صحبت کنید و سپس رها کنید</p>
+    <audio id="audioPlayer" hidden></audio>
+  </footer>
+
+  <script>
+    const micBtn = document.getElementById('micBtn');
+    const statusText = document.getElementById('statusText');
+    const statusTag = document.getElementById('statusTag');
+    const transcriptText = document.getElementById('transcriptText');
+    const floorValue = document.getElementById('floorValue');
+    const actionValue = document.getElementById('actionValue');
+    const serviceValue = document.getElementById('serviceValue');
+    const entityValue = document.getElementById('entityValue');
+    const responseMessage = document.getElementById('responseMessage');
+    const micHint = document.getElementById('micHint');
+    const audioPlayer = document.getElementById('audioPlayer');
+
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecording = false;
+    let stageTimers = [];
+
+    function setUIState(state, persianLabel, tagLabel) {
+      document.body.setAttribute('data-state', state);
+      statusText.textContent = persianLabel;
+      statusTag.textContent = tagLabel;
+    }
+
+    function clearStageTimers() {
+      stageTimers.forEach(t => clearTimeout(t));
+      stageTimers = [];
+    }
+
+    async function startRecording(e) {
+      if (e) e.preventDefault();
+      if (isRecording) return;
+
+      try {
+        audioPlayer.pause();
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm';
+
+        mediaRecorder = new MediaRecorder(stream, { mimeType });
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) {
+            audioChunks.push(event.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          stream.getTracks().forEach(track => track.stop());
+          const blob = new Blob(audioChunks, { type: 'audio/webm' });
+          if (blob.size < 800) {
+            setUIState('idle', 'زمان ضبط بسیار کوتاه بود', 'IDLE');
+            return;
+          }
+          await sendAudioToBackend(blob);
+        };
+
+        mediaRecorder.start();
+        isRecording = true;
+        setUIState('listening', 'در حال شنیدن صدای شما...', 'LISTENING');
+        micHint.textContent = 'در حال ضبط... پس از اتمام صحبت دکمه را رها کنید';
+      } catch (err) {
+        console.error('Microphone access error:', err);
+        setUIState('idle', 'خطا در دسترسی به میکروفون (نیاز به HTTPS یا localhost)', 'MIC ERROR');
+      }
+    }
+
+    function stopRecording(e) {
+      if (e) e.preventDefault();
+      if (!isRecording || !mediaRecorder) return;
+
+      isRecording = false;
+      micHint.textContent = 'نگه دارید، صحبت کنید و سپس رها کنید';
+      if (mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+    }
+
+    async function sendAudioToBackend(audioBlob) {
+      clearStageTimers();
+
+      // نمایش مراحل پردازش در رابط کاربری
+      setUIState('transcribing', 'در حال تبدیل گفتار به متن (Whisper)...', 'TRANSCRIBING');
+      stageTimers.push(setTimeout(() => {
+        setUIState('reasoning', 'تحلیل فرمان در مدل محلی (Qwen)...', 'REASONING');
+      }, 1100));
+      stageTimers.push(setTimeout(() => {
+        setUIState('executing', 'ارسال دستور به Home Assistant...', 'EXECUTING');
+      }, 2400));
+
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'command.webm');
+
+      try {
+        const response = await fetch('/process-audio', {
+          method: 'POST',
+          body: formData
+        });
+
+        clearStageTimers();
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail || 'خطا در پردازش فرمان صوتی');
+        }
+
+        // بروزرسانی اطلاعات داشبورد
+        transcriptText.textContent = data.transcript;
+        const cmd = data.parsed_command;
+        floorValue.textContent = `طبقه ${cmd.floor} (پورت ${cmd.floor === 1 ? '8501' : '8502'})`;
+        serviceValue.textContent = `${cmd.domain}.${cmd.service}`;
+        entityValue.textContent = cmd.entity_id;
+
+        if (data.ha_execution && data.ha_execution.ok) {
+          actionValue.textContent = 'اجرا شد (HTTP 200)';
+          actionValue.style.color = 'var(--accent-green)';
+        } else {
+          actionValue.textContent = 'حالت شبیه‌سازی (HA آفلاین)';
+          actionValue.style.color = 'var(--accent-amber)';
+        }
+
+        responseMessage.textContent = cmd.success_message || cmd.ack_message;
+
+        // پخش بازخورد صوتی
+        setUIState('playing', 'در حال پخش پاسخ صوتی...', 'PLAYING RESPONSE');
+        audioPlayer.src = `${data.audio_url}&t=${Date.now()}`;
+        await audioPlayer.play();
+
+        audioPlayer.onended = () => {
+          setUIState('idle', 'آماده دریافت فرمان بعدی', 'IDLE');
+        };
+      } catch (err) {
+        clearStageTimers();
+        console.error(err);
+        setUIState('idle', 'خطا در پردازش', 'ERROR');
+        responseMessage.textContent = err.message;
+        responseMessage.style.color = 'var(--accent-red)';
+      }
+    }
+
+    // پشتیبانی همزمان از رویدادهای لمسی موبایل و ماوس دسکتاپ
+    micBtn.addEventListener('mousedown', startRecording);
+    window.addEventListener('mouseup', stopRecording);
+
+    micBtn.addEventListener('touchstart', startRecording, { passive: false });
+    window.addEventListener('touchend', stopRecording, { passive: false });
+    window.addEventListener('touchcancel', stopRecording, { passive: false });
+    micBtn.addEventListener('contextmenu', e => e.preventDefault());
+  </script>
+</body>
+</html>
