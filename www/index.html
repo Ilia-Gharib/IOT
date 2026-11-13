@@ -1,0 +1,3616 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#090d16" />
+  <link rel="icon" href="data:," />
+  <title>کنترل صوتی ساختمان هوشمند</title>
+  <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg-primary: #090d16;
+      --bg-card: rgba(30, 41, 59, 0.65);
+      --border-card: rgba(148, 163, 184, 0.14);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent-blue: #38bdf8;
+      --accent-purple: #818cf8;
+      --accent-green: #34d399;
+      --accent-amber: #fbbf24;
+      --accent-red: #f87171;
+
+      /* Phase 2 Semantic Auth & Control Tokens */
+      --bg-backdrop: rgba(9, 13, 22, 0.84);
+      --bg-modal: rgba(15, 23, 42, 0.92);
+      --bg-input: #0f172a;
+      --bg-input-focus: #0b1220;
+      --border-control: rgba(148, 163, 184, 0.58);
+      --border-modal: rgba(56, 189, 248, 0.28);
+
+      --text-on-accent: #f8fafc;
+      --text-error-soft: #fca5a5;
+      --text-warning-soft: #fde68a;
+      --text-purple-soft: #c4b5fd;
+
+      --surface-blue-tint: rgba(56, 189, 248, 0.12);
+      --border-blue-tint: rgba(56, 189, 248, 0.42);
+      --surface-purple-tint: rgba(129, 140, 248, 0.16);
+      --border-purple-tint: rgba(129, 140, 248, 0.48);
+      --surface-error-tint: rgba(248, 113, 113, 0.14);
+      --border-error-tint: rgba(248, 113, 113, 0.55);
+      --surface-warning-tint: rgba(251, 191, 36, 0.14);
+      --border-warning-tint: rgba(251, 191, 36, 0.50);
+      --surface-neutral-control: rgba(148, 163, 184, 0.12);
+      --surface-divider-subtle: rgba(148, 163, 184, 0.08);
+      --border-cta-subtle: rgba(248, 250, 252, 0.16);
+      --spinner-track: rgba(248, 250, 252, 0.35);
+      --halo-blue: rgba(56, 189, 248, 0.22);
+      --halo-red: rgba(248, 113, 113, 0.22);
+
+      --cta-gradient: linear-gradient(135deg, #0369a1, #4338ca);
+      --cta-gradient-hover: linear-gradient(135deg, #0284c7, #4f46e5);
+      --shadow-modal: 0 24px 64px rgba(2, 6, 23, 0.78), 0 0 0 1px rgba(129, 140, 248, 0.10);
+      --shadow-cta: 0 10px 24px rgba(3, 105, 161, 0.35);
+      --focus-ring: 2px solid var(--accent-blue);
+
+      --radius-modal: 1.25rem;
+      --radius-control: 0.75rem;
+      --radius-pill: 999px;
+
+      --space-1: 0.25rem;
+      --space-2: 0.5rem;
+      --space-3: 0.75rem;
+      --space-4: 1rem;
+      --space-5: 1.25rem;
+      --space-6: 1.5rem;
+
+      --touch-min: 44px;
+      --control-height: 48px;
+      --motion-fast: 150ms ease;
+      --motion-modal: 200ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      font-family: 'Vazirmatn', system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at 50% 0%, #1e293b 0%, var(--bg-primary) 70%);
+      color: var(--text-main);
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 1.25rem;
+      overflow-x: hidden;
+    }
+
+    .app-shell {
+      width: 100%;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .header,
+    .status-banner,
+    .dashboard,
+    .admin-panel,
+    .mic-container {
+      width: 100%;
+      max-width: 720px;
+      margin-inline: auto;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+      padding-block-end: var(--space-4);
+      border-bottom: 1px solid var(--border-card);
+    }
+
+    .header-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: var(--space-3);
+      width: 100%;
+    }
+
+    .header-title {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .header-title h1 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    .header-title p {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-block-start: 0.15rem;
+    }
+
+    .header-session-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-2);
+      width: 100%;
+      padding-block-start: var(--space-2);
+      border-top: 1px solid var(--surface-divider-subtle);
+      flex-wrap: wrap;
+    }
+
+    .user-session-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      min-width: 0;
+      max-width: 100%;
+      min-height: var(--touch-min);
+      padding-block: 0.35rem;
+      padding-inline: 0.75rem;
+      border-radius: var(--radius-pill);
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      backdrop-filter: blur(12px);
+    }
+
+    .session-user-icon {
+      width: 16px;
+      height: 16px;
+      fill: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    .user-name {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-main);
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .floor-badge {
+      display: inline-flex;
+      align-items: center;
+      padding-block: 0.2rem;
+      padding-inline: 0.6rem;
+      border-radius: var(--radius-pill);
+      font-size: 0.75rem;
+      font-weight: 700;
+      white-space: nowrap;
+      flex-shrink: 0;
+      background: var(--surface-blue-tint);
+      color: var(--accent-blue);
+      border: 1px solid var(--border-blue-tint);
+    }
+
+    .floor-badge.is-admin {
+      background: var(--surface-purple-tint);
+      color: var(--text-purple-soft);
+      border-color: var(--border-purple-tint);
+    }
+
+    .logout-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-2);
+      min-height: var(--touch-min);
+      min-width: var(--touch-min);
+      padding-block: 0.45rem;
+      padding-inline: 0.9rem;
+      border-radius: var(--radius-control);
+      border: 1px solid var(--border-control);
+      background: var(--surface-neutral-control);
+      color: var(--text-main);
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast), transform var(--motion-fast);
+    }
+
+    .logout-btn svg {
+      width: 18px;
+      height: 18px;
+      fill: currentColor;
+      flex-shrink: 0;
+    }
+
+    .logout-btn:hover {
+      background: var(--surface-error-tint);
+      border-color: var(--border-error-tint);
+      color: var(--text-error-soft);
+    }
+
+    .logout-btn:active {
+      transform: scale(0.98);
+    }
+
+    .logout-btn:focus-visible {
+      outline: var(--focus-ring);
+      outline-offset: 2px;
+    }
+
+    .connection-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.75rem;
+      background: rgba(52, 211, 153, 0.12);
+      color: var(--accent-green);
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      border: 1px solid rgba(52, 211, 153, 0.3);
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: background 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+    }
+
+    .connection-badge.is-offline {
+      background: rgba(248, 113, 113, 0.12);
+      color: #fca5a5;
+      border-color: rgba(248, 113, 113, 0.35);
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 8px currentColor;
+    }
+
+    /* Status Stepper Banner */
+    .status-banner {
+      margin-top: 1.1rem;
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-card);
+      border-radius: 1rem;
+      padding: 0.9rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      transition: all 0.3s ease;
+    }
+
+    .status-left {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      min-width: 0;
+    }
+
+    .status-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      flex-shrink: 0;
+      transition: all 0.3s ease;
+    }
+
+    .status-text {
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .status-step-tag {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      background: rgba(15, 23, 42, 0.6);
+      padding: 0.25rem 0.6rem;
+      border-radius: 0.5rem;
+      font-family: monospace;
+      direction: ltr;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    /* Dynamic State Colors */
+    body[data-state="listening"] .status-indicator {
+      background: var(--accent-red);
+      box-shadow: 0 0 12px var(--accent-red);
+      animation: blink 1s infinite;
+    }
+    body[data-state="transcribing"] .status-indicator,
+    body[data-state="reasoning"] .status-indicator,
+    body[data-state="executing"] .status-indicator {
+      background: var(--accent-amber);
+      box-shadow: 0 0 12px var(--accent-amber);
+      animation: pulse-amber 1.2s infinite;
+    }
+    body[data-state="playing"] .status-indicator {
+      background: var(--accent-green);
+      box-shadow: 0 0 12px var(--accent-green);
+    }
+    body[data-state="warning"] .status-indicator {
+      background: var(--accent-amber);
+      box-shadow: 0 0 12px rgba(251, 191, 36, 0.7);
+    }
+    body[data-state="warning"] .status-banner {
+      border-color: rgba(251, 191, 36, 0.35);
+    }
+    body[data-state="warning"] .status-step-tag {
+      color: var(--accent-amber);
+    }
+    body[data-state="error"] .status-indicator {
+      background: var(--accent-red);
+      box-shadow: 0 0 12px rgba(248, 113, 113, 0.75);
+    }
+    body[data-state="error"] .status-banner {
+      border-color: rgba(248, 113, 113, 0.35);
+    }
+    body[data-state="error"] .status-step-tag {
+      color: var(--accent-red);
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    /* Main Telemetry Cards */
+    .dashboard {
+      margin: 1.1rem auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+      flex: 1;
+    }
+
+    .card {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-card);
+      border-radius: 1rem;
+      padding: 1rem;
+    }
+
+    .card-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 0.4rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .transcript-box {
+      font-size: 1rem;
+      font-weight: 500;
+      line-height: 1.6;
+      min-height: 1.6rem;
+      color: var(--text-main);
+      overflow-wrap: anywhere;
+    }
+
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 0.75rem;
+    }
+
+    .metric-box {
+      background: rgba(15, 23, 42, 0.55);
+      border: 1px solid rgba(148, 163, 184, 0.1);
+      border-radius: 0.85rem;
+      padding: 0.8rem;
+      min-width: 0;
+    }
+
+    .metric-title {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin-bottom: 0.3rem;
+    }
+
+    .metric-value {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--accent-blue);
+      overflow-wrap: anywhere;
+      word-break: normal;
+    }
+
+    .metric-value.ltr {
+      direction: ltr;
+      text-align: start;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.85rem;
+    }
+
+    .metric-value.is-success,
+    .response-message.is-success {
+      color: var(--accent-green);
+    }
+
+    .metric-value.is-warning,
+    .response-message.is-warning {
+      color: var(--accent-amber);
+    }
+
+    .metric-value.is-error,
+    .response-message.is-error {
+      color: var(--accent-red);
+    }
+
+    .response-message {
+      font-size: 0.92rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+      margin-top: 0.25rem;
+      white-space: pre-line;
+      overflow-wrap: anywhere;
+      word-break: normal;
+    }
+
+    .response-meta {
+      margin-top: 0.6rem;
+      padding: 0.45rem 0.65rem;
+      border-radius: 0.6rem;
+      background: rgba(15, 23, 42, 0.72);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.75rem;
+      line-height: 1.5;
+      color: var(--text-muted);
+      direction: ltr;
+      text-align: start;
+      overflow-wrap: anywhere;
+      word-break: normal;
+    }
+
+    .response-meta.is-error {
+      border-color: rgba(248, 113, 113, 0.35);
+      color: var(--accent-red);
+      background: rgba(248, 113, 113, 0.08);
+    }
+
+    .response-meta.is-warning {
+      border-color: rgba(251, 191, 36, 0.35);
+      color: var(--accent-amber);
+      background: rgba(251, 191, 36, 0.08);
+    }
+
+    .replay-btn {
+      margin-top: 0.65rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      min-height: 44px;
+      padding: 0.45rem 0.9rem;
+      border-radius: 0.65rem;
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      background: rgba(56, 189, 248, 0.12);
+      color: var(--accent-blue);
+      font-family: inherit;
+      font-size: 0.84rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s ease, border-color 0.2s ease;
+    }
+
+    .replay-btn:hover {
+      background: rgba(56, 189, 248, 0.2);
+      border-color: rgba(56, 189, 248, 0.55);
+    }
+
+    .replay-btn:focus-visible {
+      outline: 2px solid var(--accent-blue);
+      outline-offset: 2px;
+    }
+
+    /* Hold-to-Talk Mic Section */
+    .mic-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 1.2rem 0 0.5rem;
+      position: relative;
+    }
+
+    .mic-wrapper {
+      position: relative;
+      width: 110px;
+      height: 110px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .pulse-ring {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 2px solid var(--accent-blue);
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    body[data-state="listening"] .pulse-ring {
+      border-color: var(--accent-red);
+      animation: ripple 1.5s infinite cubic-bezier(0.2, 0.8, 0.4, 1);
+    }
+
+    body[data-state="playing"] .pulse-ring {
+      border-color: var(--accent-green);
+      animation: ripple 1.8s infinite cubic-bezier(0.2, 0.8, 0.4, 1);
+    }
+
+    .mic-btn {
+      width: 88px;
+      height: 88px;
+      border-radius: 50%;
+      border: none;
+      background: linear-gradient(135deg, #0284c7, #4f46e5);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 10px 25px rgba(56, 189, 248, 0.3);
+      cursor: pointer;
+      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s ease, box-shadow 0.3s ease, opacity 0.2s ease;
+      z-index: 2;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .mic-btn:active:not(:disabled),
+    body[data-state="listening"] .mic-btn {
+      transform: scale(1.12);
+      background: linear-gradient(135deg, #ef4444, #be123c);
+      box-shadow: 0 12px 30px rgba(239, 68, 68, 0.45);
+    }
+
+    .mic-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .mic-btn:focus-visible {
+      outline: 2px solid var(--accent-blue);
+      outline-offset: 4px;
+    }
+
+    .mic-btn svg {
+      width: 36px;
+      height: 36px;
+      fill: currentColor;
+    }
+
+    .mic-hint {
+      margin-top: 0.9rem;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    @keyframes ripple {
+      0% { transform: scale(0.85); opacity: 0.85; }
+      100% { transform: scale(1.65); opacity: 0; }
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+
+    @keyframes pulse-amber {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.25); }
+    }
+
+    /* Login Modal Overlay & Glassmorphism Card */
+    .auth-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      padding: var(--space-4);
+      overflow-y: auto;
+      background:
+        radial-gradient(circle at 85% 15%, var(--surface-blue-tint) 0%, transparent 45%),
+        radial-gradient(circle at 15% 85%, var(--surface-purple-tint) 0%, transparent 45%),
+        var(--bg-backdrop);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+
+    .auth-card {
+      width: 100%;
+      max-width: 420px;
+      margin: auto;
+      padding-block: var(--space-6);
+      padding-inline: var(--space-5);
+      background: var(--bg-modal);
+      border: 1px solid var(--border-modal);
+      border-radius: var(--radius-modal);
+      box-shadow: var(--shadow-modal);
+      animation: authCardEnter var(--motion-modal);
+    }
+
+    .auth-header {
+      text-align: center;
+      margin-block-end: var(--space-5);
+    }
+
+    .auth-emblem {
+      width: 48px;
+      height: 48px;
+      margin-inline: auto;
+      margin-block-end: var(--space-3);
+      border-radius: var(--radius-control);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, var(--surface-blue-tint), var(--surface-purple-tint));
+      border: 1px solid var(--border-modal);
+      color: var(--accent-blue);
+    }
+
+    .auth-emblem svg {
+      width: 24px;
+      height: 24px;
+      fill: currentColor;
+    }
+
+    .auth-title {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--text-main);
+      line-height: 1.4;
+    }
+
+    .auth-subtitle {
+      margin-block-start: var(--space-1);
+      font-size: 0.84rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .auth-alert {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--space-2);
+      padding-block: 0.75rem;
+      padding-inline: 0.9rem;
+      margin-block-end: var(--space-4);
+      border-radius: var(--radius-control);
+      background: var(--surface-error-tint);
+      border: 1px solid var(--border-error-tint);
+      color: var(--text-error-soft);
+      font-size: 0.85rem;
+      line-height: 1.55;
+    }
+
+    .auth-alert:focus {
+      outline: var(--focus-ring);
+      outline-offset: 2px;
+    }
+
+    .auth-alert-icon {
+      width: 20px;
+      height: 20px;
+      fill: var(--accent-red);
+      flex-shrink: 0;
+      margin-block-start: 0.1rem;
+    }
+
+    .auth-alert-body {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-1);
+      min-width: 0;
+    }
+
+    .auth-alert-code {
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-align: start;
+    }
+
+    .auth-form {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-4);
+    }
+
+    .auth-field {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+
+    .auth-label {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .password-field {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .auth-input {
+      width: 100%;
+      min-height: var(--control-height);
+      padding-block: 0.65rem;
+      padding-inline: 0.9rem;
+      border-radius: var(--radius-control);
+      border: 1px solid var(--border-control);
+      background: var(--bg-input);
+      color: var(--text-main);
+      font-family: ui-monospace, SFMono-Regular, Consolas, 'Vazirmatn', monospace;
+      font-size: 1rem;
+      line-height: 1.5;
+      text-align: start;
+      transition: border-color var(--motion-fast), background var(--motion-fast), box-shadow var(--motion-fast);
+    }
+
+    .auth-input.has-toggle {
+      padding-inline-end: 3.1rem;
+    }
+
+    .auth-input::placeholder {
+      color: var(--text-muted);
+      opacity: 0.85;
+    }
+
+    .auth-input:focus {
+      outline: none;
+      background: var(--bg-input-focus);
+      border-color: var(--accent-blue);
+      box-shadow: 0 0 0 3px var(--halo-blue);
+    }
+
+    .auth-input[aria-invalid="true"] {
+      border-color: var(--accent-red);
+    }
+
+    .auth-input[aria-invalid="true"]:focus {
+      box-shadow: 0 0 0 3px var(--halo-red);
+    }
+
+    .auth-input:read-only {
+      opacity: 0.72;
+      cursor: wait;
+    }
+
+    .password-toggle {
+      position: absolute;
+      inset-inline-end: var(--space-1);
+      min-width: var(--touch-min);
+      min-height: var(--touch-min);
+      border: none;
+      border-radius: calc(var(--radius-control) - 2px);
+      background: transparent;
+      color: var(--text-muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: color var(--motion-fast), background var(--motion-fast);
+    }
+
+    .password-toggle:hover:not(:disabled) {
+      color: var(--text-main);
+      background: var(--surface-neutral-control);
+    }
+
+    .password-toggle:focus-visible {
+      outline: var(--focus-ring);
+      outline-offset: -2px;
+    }
+
+    .password-toggle:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .password-toggle svg {
+      width: 20px;
+      height: 20px;
+      fill: currentColor;
+    }
+
+    .field-error {
+      font-size: 0.8rem;
+      color: var(--text-error-soft);
+      line-height: 1.45;
+    }
+
+    .auth-submit-btn {
+      width: 100%;
+      min-height: var(--control-height);
+      margin-block-start: var(--space-1);
+      padding-block: 0.7rem;
+      padding-inline: var(--space-4);
+      border: 1px solid var(--border-cta-subtle);
+      border-radius: var(--radius-control);
+      background: var(--cta-gradient);
+      color: var(--text-on-accent);
+      font-family: inherit;
+      font-size: 0.95rem;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-2);
+      cursor: pointer;
+      box-shadow: var(--shadow-cta);
+      transition: background var(--motion-fast), transform var(--motion-fast), opacity var(--motion-fast);
+    }
+
+    .auth-submit-btn:hover:not(:disabled) {
+      background: var(--cta-gradient-hover);
+    }
+
+    .auth-submit-btn:active:not(:disabled) {
+      transform: scale(0.99);
+    }
+
+    .auth-submit-btn:focus-visible {
+      outline: var(--focus-ring);
+      outline-offset: 3px;
+    }
+
+    .auth-submit-btn:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-spinner {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 2px solid var(--spinner-track);
+      border-top-color: var(--text-on-accent);
+      animation: authSpin 0.75s linear infinite;
+      flex-shrink: 0;
+    }
+
+    .auth-hint {
+      margin-block-start: var(--space-4);
+      text-align: center;
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .auth-link-row {
+      display: flex;
+      justify-content: center;
+      margin-block-start: var(--space-3);
+    }
+
+    .auth-text-btn {
+      background: transparent;
+      border: none;
+      color: var(--accent-blue);
+      font-family: inherit;
+      font-size: 0.84rem;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 0.35rem 0.65rem;
+      border-radius: 0.5rem;
+      transition: background var(--motion-fast), color var(--motion-fast);
+    }
+
+    .auth-text-btn:hover:not(:disabled) {
+      background: var(--surface-blue-tint);
+      color: var(--text-main);
+    }
+
+    .auth-text-btn:focus-visible {
+      outline: var(--focus-ring);
+      outline-offset: 2px;
+    }
+
+    .auth-alert.is-success {
+      background: rgba(52, 211, 153, 0.14);
+      border-color: rgba(52, 211, 153, 0.48);
+      color: #a7f3d0;
+    }
+
+    .auth-alert.is-success .auth-alert-icon {
+      fill: var(--accent-green);
+    }
+
+    .otp-step-pills {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.45rem;
+      margin-block-end: var(--space-4);
+    }
+
+    .otp-step-pill {
+      font-size: 0.72rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: var(--radius-pill);
+      background: rgba(148, 163, 184, 0.12);
+      color: var(--text-muted);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+
+    .otp-step-pill.is-active {
+      background: var(--surface-blue-tint);
+      color: var(--accent-blue);
+      border-color: var(--border-blue-tint);
+      font-weight: 700;
+    }
+
+    /* Admin Control & Telemetry Dashboard */
+    .admin-panel {
+      margin-block: 0.4rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+
+    .admin-section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .admin-title-group {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .admin-title-badge {
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 0.2rem 0.55rem;
+      border-radius: var(--radius-pill);
+      background: var(--surface-purple-tint);
+      color: var(--text-purple-soft);
+      border: 1px solid var(--border-purple-tint);
+    }
+
+    .admin-refresh-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      min-height: 34px;
+      padding: 0.3rem 0.75rem;
+      border-radius: 0.6rem;
+      border: 1px solid var(--border-blue-tint);
+      background: var(--surface-blue-tint);
+      color: var(--accent-blue);
+      font-family: inherit;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background var(--motion-fast);
+    }
+
+    .admin-refresh-btn:hover {
+      background: rgba(56, 189, 248, 0.22);
+    }
+
+    /* Network Topology Pipeline */
+    .topology-flow {
+      display: flex;
+      align-items: stretch;
+      justify-content: space-between;
+      gap: 0.45rem;
+      overflow-x: auto;
+      padding-block: 0.35rem;
+    }
+
+    .topo-node {
+      flex: 1 1 115px;
+      min-width: 112px;
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 0.85rem;
+      padding: 0.65rem 0.6rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.28rem;
+    }
+
+    .topo-node.is-online {
+      border-color: rgba(52, 211, 153, 0.4);
+    }
+
+    .topo-node.is-offline {
+      border-color: rgba(248, 113, 113, 0.45);
+      background: rgba(127, 29, 29, 0.16);
+    }
+
+    .topo-node-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.35rem;
+    }
+
+    .topo-status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 0.12rem 0.42rem;
+      border-radius: var(--radius-pill);
+      direction: ltr;
+    }
+
+    .topo-node.is-online .topo-status-pill {
+      background: rgba(52, 211, 153, 0.15);
+      color: var(--accent-green);
+    }
+
+    .topo-node.is-offline .topo-status-pill {
+      background: rgba(248, 113, 113, 0.16);
+      color: var(--accent-red);
+    }
+
+    .topo-title {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--text-main);
+      direction: ltr;
+      text-align: start;
+    }
+
+    .topo-sub {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .topo-connector {
+      display: flex;
+      align-items: center;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    /* Hardware Telemetry Meters */
+    .hw-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+    }
+
+    .hw-card {
+      background: rgba(15, 23, 42, 0.58);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      border-radius: 0.85rem;
+      padding: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    .hw-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 0.76rem;
+      color: var(--text-muted);
+    }
+
+    .hw-pct {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--accent-blue);
+      direction: ltr;
+    }
+
+    .hw-bar-track {
+      width: 100%;
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.16);
+      overflow: hidden;
+    }
+
+    .hw-bar-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #38bdf8, #818cf8);
+      transition: width 0.35s ease;
+    }
+
+    .hw-sub {
+      font-size: 0.71rem;
+      color: var(--text-muted);
+      direction: ltr;
+      text-align: start;
+      overflow-wrap: anywhere;
+    }
+
+    /* Admin User Manager */
+    .user-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .user-row {
+      background: rgba(15, 23, 42, 0.58);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      border-radius: 0.85rem;
+      padding: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+
+    .user-row-main {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .user-row-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .user-email-tag {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      direction: ltr;
+    }
+
+    .user-row-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+    }
+
+    .mini-btn {
+      min-height: 32px;
+      padding: 0.25rem 0.65rem;
+      border-radius: 0.55rem;
+      border: 1px solid var(--border-control);
+      background: var(--surface-neutral-control);
+      color: var(--text-main);
+      font-family: inherit;
+      font-size: 0.76rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background var(--motion-fast), border-color var(--motion-fast);
+    }
+
+    .mini-btn:hover {
+      background: var(--surface-blue-tint);
+      border-color: var(--border-blue-tint);
+    }
+
+    .user-inline-form {
+      display: flex;
+      gap: 0.45rem;
+      align-items: center;
+      flex-wrap: wrap;
+      padding-top: 0.45rem;
+      border-top: 1px solid var(--surface-divider-subtle);
+    }
+
+    .user-inline-input {
+      flex: 1 1 180px;
+      min-height: 36px;
+      padding: 0.35rem 0.65rem;
+      border-radius: 0.55rem;
+      border: 1px solid var(--border-control);
+      background: var(--bg-input);
+      color: var(--text-main);
+      font-size: 0.82rem;
+      direction: ltr;
+    }
+
+    .admin-feedback {
+      font-size: 0.78rem;
+      padding: 0.45rem 0.7rem;
+      border-radius: 0.6rem;
+      background: rgba(52, 211, 153, 0.12);
+      color: #a7f3d0;
+      border: 1px solid rgba(52, 211, 153, 0.35);
+    }
+
+    .admin-feedback.is-error {
+      background: var(--surface-error-tint);
+      color: var(--text-error-soft);
+      border-color: var(--border-error-tint);
+    }
+
+    @media (max-width: 600px) {
+      .hw-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @keyframes authCardEnter {
+      from { opacity: 0; transform: translateY(10px) scale(0.985); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes authSpin {
+      to { transform: rotate(360deg); }
+    }
+
+    @media (max-width: 420px) {
+      body {
+        padding: var(--space-4);
+      }
+      .auth-card {
+        padding-block: var(--space-5);
+        padding-inline: var(--space-4);
+      }
+      .header-title h1 {
+        font-size: 1.05rem;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+  </style>
+</head>
+<body data-state="idle" data-auth="unauthenticated">
+
+  <!-- Main Application Shell (inert & aria-hidden while unauthenticated / Login Modal open) -->
+  <div id="appShell" class="app-shell" inert aria-hidden="true">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-top">
+        <div class="header-title">
+          <h1>دستیار صوتی ساختمان هوشمند</h1>
+          <p>پردازش کاملاً محلی <bdi dir="ltr">(Whisper + Qwen 3.5 + HA)</bdi></p>
+        </div>
+        <div class="connection-badge" id="connectionBadge">
+          <span class="dot" aria-hidden="true"></span>
+          <span id="connectionLabel">شبکه محلی فعال</span>
+        </div>
+      </div>
+
+      <!-- Authenticated User / Floor / Logout Bar -->
+      <div class="header-session-bar" id="userSessionBar" hidden>
+        <div class="user-session-badge" id="userSessionBadge">
+          <svg class="session-user-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 12c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm0 2c-3.33 0-10 1.67-10 5v3h20v-3c0-3.33-6.67-5-10-5z"/>
+          </svg>
+          <span class="user-name" id="authUsername" dir="auto"></span>
+          <span class="floor-badge" id="authFloorBadge"></span>
+        </div>
+
+        <button
+          type="button"
+          class="logout-btn"
+          id="logoutBtn"
+          aria-label="خروج از حساب کاربری"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
+          </svg>
+          <span>خروج</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Real-time Status Transition Bar -->
+    <section class="status-banner">
+      <div class="status-left">
+        <div class="status-indicator" aria-hidden="true"></div>
+        <span class="status-text" id="statusText" aria-live="polite" aria-atomic="true">آماده دریافت فرمان صوتی</span>
+      </div>
+      <span class="status-step-tag" id="statusTag" aria-hidden="true">IDLE</span>
+    </section>
+
+    <!-- Real-time Telemetry Dashboard -->
+    <main class="dashboard">
+      <div class="card">
+        <div class="card-label">
+          <span>متن تشخیص داده شده (<bdi dir="ltr">Faster-Whisper</bdi>)</span>
+        </div>
+        <div class="transcript-box" id="transcriptText">دکمه میکروفون را نگه دارید و فرمان خود را بگویید...</div>
+      </div>
+
+      <div class="telemetry-grid">
+        <div class="metric-box">
+          <div class="metric-title">طبقه هدف (<bdi dir="ltr">Floor</bdi>)</div>
+          <div class="metric-value" id="floorValue">—</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-title">وضعیت اجرا (<bdi dir="ltr">HA State</bdi>)</div>
+          <div class="metric-value" id="actionValue">—</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-title">دامنه و سرویس (<bdi dir="ltr">Service</bdi>)</div>
+          <div class="metric-value ltr" id="serviceValue">—</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-title">شناسه تجهیز (<bdi dir="ltr">Entity ID</bdi>)</div>
+          <div class="metric-value ltr" id="entityValue">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">
+          <span>پاسخ سیستم و بازخورد صوتی (<bdi dir="ltr">Qwen 3.5 + Edge-TTS / Piper</bdi>)</span>
+        </div>
+        <div class="response-message" id="responseMessage" aria-live="polite">در انتظار فرمان...</div>
+        <div class="response-meta ltr" id="responseMeta" dir="ltr" hidden></div>
+        <button type="button" class="replay-btn" id="replayBtn" hidden>پخش مجدد پاسخ صوتی</button>
+      </div>
+    </main>
+
+    <!-- Admin Control & Telemetry Dashboard (Unlocked only for role === 'admin') -->
+    <section id="adminPanel" class="admin-panel" aria-label="پنل مدیریت و پایش لحظه‌ای" hidden>
+      <!-- Live Network Topology -->
+      <div class="card">
+        <div class="admin-section-header">
+          <div class="admin-title-group">
+            <span style="font-size:0.85rem;font-weight:700;">توپولوژی زنده شبکه سرویس‌ها</span>
+            <span class="admin-title-badge">Live Topology</span>
+          </div>
+          <button type="button" id="adminRefreshBtn" class="admin-refresh-btn">بروزرسانی لحظه‌ای</button>
+        </div>
+        <div id="topologyFlow" class="topology-flow" style="margin-top:0.7rem;"></div>
+      </div>
+
+      <!-- Live Hardware Telemetry -->
+      <div class="card">
+        <div class="admin-section-header" style="margin-bottom:0.7rem;">
+          <div class="admin-title-group">
+            <span style="font-size:0.85rem;font-weight:700;">تله‌متری زنده سخت‌افزار</span>
+            <span class="admin-title-badge" dir="ltr">CPU · RAM · GPU</span>
+          </div>
+          <span id="telemetryTimestamp" style="font-size:0.72rem;color:var(--text-muted);" dir="ltr">—</span>
+        </div>
+        <div class="hw-grid">
+          <div class="hw-card">
+            <div class="hw-head">
+              <span>پردازنده (CPU)</span>
+              <span class="hw-pct" id="hwCpuPct">—%</span>
+            </div>
+            <div class="hw-bar-track"><div class="hw-bar-fill" id="hwCpuBar"></div></div>
+            <div class="hw-sub" id="hwCpuSub">Cores: —</div>
+          </div>
+          <div class="hw-card">
+            <div class="hw-head">
+              <span>حافظه رم (RAM)</span>
+              <span class="hw-pct" id="hwRamPct">—%</span>
+            </div>
+            <div class="hw-bar-track"><div class="hw-bar-fill" id="hwRamBar"></div></div>
+            <div class="hw-sub" id="hwRamSub">— / — GB</div>
+          </div>
+          <div class="hw-card">
+            <div class="hw-head">
+              <span>گرافیک (NVIDIA GPU)</span>
+              <span class="hw-pct" id="hwGpuPct">—%</span>
+            </div>
+            <div class="hw-bar-track"><div class="hw-bar-fill" id="hwGpuBar"></div></div>
+            <div class="hw-sub" id="hwGpuSub">Probing...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- User Manager -->
+      <div class="card">
+        <div class="admin-section-header" style="margin-bottom:0.7rem;">
+          <div class="admin-title-group">
+            <span style="font-size:0.85rem;font-weight:700;">مدیریت کاربران ساختمان</span>
+            <span class="admin-title-badge" dir="ltr">users.json</span>
+          </div>
+        </div>
+        <div id="adminUserFeedback" class="admin-feedback" hidden style="margin-bottom:0.65rem;"></div>
+        <div id="adminUserList" class="user-list"></div>
+      </div>
+    </section>
+
+    <!-- Hold-to-Talk Control -->
+    <footer class="mic-container">
+      <div class="mic-wrapper">
+        <div class="pulse-ring" aria-hidden="true"></div>
+        <button type="button" class="mic-btn" id="micBtn" aria-label="نگه دارید و صحبت کنید" aria-pressed="false" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/>
+          </svg>
+        </button>
+      </div>
+      <p class="mic-hint" id="micHint">نگه دارید، صحبت کنید و سپس رها کنید</p>
+      <audio id="audioPlayer" hidden></audio>
+    </footer>
+
+  </div>
+
+  <!-- Login Modal Overlay -->
+  <div
+    id="loginModal"
+    class="auth-overlay"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="loginModalTitle"
+    aria-describedby="loginModalDesc"
+    hidden
+  >
+    <div class="auth-card">
+      <div class="auth-header">
+        <div class="auth-emblem" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/>
+          </svg>
+        </div>
+        <h2 id="loginModalTitle" class="auth-title">ورود به پنل کنترل صوتی</h2>
+        <p id="loginModalDesc" class="auth-subtitle">برای کنترل تجهیزات ساختمان هوشمند وارد شوید</p>
+      </div>
+
+      <div
+        id="loginErrorAlert"
+        class="auth-alert"
+        role="alert"
+        aria-live="assertive"
+        tabindex="-1"
+        hidden
+      >
+        <svg class="auth-alert-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+        </svg>
+        <div class="auth-alert-body">
+          <span id="loginErrorText"></span>
+          <span id="loginErrorCode" class="auth-alert-code" dir="ltr" hidden></span>
+        </div>
+      </div>
+
+      <form id="loginForm" class="auth-form" novalidate>
+        <div class="auth-field">
+          <label for="loginUsername" class="auth-label">نام کاربری</label>
+          <input
+            id="loginUsername"
+            name="username"
+            type="text"
+            class="auth-input"
+            dir="ltr"
+            inputmode="text"
+            autocomplete="username"
+            autocapitalize="none"
+            autocorrect="off"
+            spellcheck="false"
+            placeholder="floor1_user"
+            aria-required="true"
+            aria-invalid="false"
+            aria-describedby="loginUsernameError"
+          />
+          <p id="loginUsernameError" class="field-error" role="alert" hidden></p>
+        </div>
+
+        <div class="auth-field">
+          <label for="loginPassword" class="auth-label">رمز عبور</label>
+          <div class="password-field" dir="ltr">
+            <input
+              id="loginPassword"
+              name="password"
+              type="password"
+              class="auth-input has-toggle"
+              dir="ltr"
+              autocomplete="current-password"
+              placeholder="••••••••"
+              aria-required="true"
+              aria-invalid="false"
+              aria-describedby="loginPasswordError"
+            />
+            <button
+              type="button"
+              id="togglePasswordBtn"
+              class="password-toggle"
+              aria-label="نمایش رمز عبور"
+              aria-pressed="false"
+              aria-controls="loginPassword"
+            >
+              <svg class="icon-eye-open" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+              </svg>
+              <svg class="icon-eye-closed" viewBox="0 0 24 24" aria-hidden="true" hidden>
+                <path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
+              </svg>
+            </button>
+          </div>
+          <p id="loginPasswordError" class="field-error" role="alert" hidden></p>
+        </div>
+
+        <button type="submit" id="loginSubmitBtn" class="auth-submit-btn" aria-busy="false">
+          <span class="btn-spinner" aria-hidden="true" hidden></span>
+          <span class="btn-label">ورود به پنل</span>
+        </button>
+
+        <div class="auth-link-row">
+          <button type="button" id="openForgotBtn" class="auth-text-btn">فراموشی رمز عبور؟</button>
+        </div>
+      </form>
+
+      <!-- Forgot Password (3-Step Email OTP Flow) -->
+      <div id="forgotPasswordSection" hidden>
+        <div class="otp-step-pills" aria-hidden="true">
+          <span id="otpPill1" class="otp-step-pill is-active">۱. ایمیل</span>
+          <span id="otpPill2" class="otp-step-pill">۲. کد ۶ رقمی</span>
+          <span id="otpPill3" class="otp-step-pill">۳. رمز جدید</span>
+        </div>
+
+        <!-- Step 1: Email -->
+        <form id="forgotEmailForm" class="auth-form" novalidate>
+          <div class="auth-field">
+            <label for="forgotEmailInput" class="auth-label">ایمیل حساب کاربری</label>
+            <input
+              id="forgotEmailInput"
+              type="email"
+              class="auth-input"
+              dir="ltr"
+              autocomplete="email"
+              placeholder="floor1@building.local"
+            />
+          </div>
+          <button type="submit" id="forgotSendOtpBtn" class="auth-submit-btn">
+            <span class="btn-label">ارسال کد تایید ۶ رقمی</span>
+          </button>
+        </form>
+
+        <!-- Step 2: Verify 6-digit OTP -->
+        <form id="forgotOtpForm" class="auth-form" novalidate hidden>
+          <div class="auth-field">
+            <label for="forgotOtpInput" class="auth-label">کد تایید ۶ رقمی (معتبر به مدت ۵ دقیقه)</label>
+            <input
+              id="forgotOtpInput"
+              type="text"
+              class="auth-input"
+              dir="ltr"
+              inputmode="numeric"
+              maxlength="6"
+              placeholder="123456"
+            />
+          </div>
+          <button type="submit" id="forgotVerifyOtpBtn" class="auth-submit-btn">
+            <span class="btn-label">تایید کد ۶ رقمی</span>
+          </button>
+        </form>
+
+        <!-- Step 3: Set New Password -->
+        <form id="forgotResetForm" class="auth-form" novalidate hidden>
+          <div class="auth-field">
+            <label for="forgotNewPasswordInput" class="auth-label">رمز عبور جدید (حداقل ۶ کاراکتر)</label>
+            <input
+              id="forgotNewPasswordInput"
+              type="password"
+              class="auth-input"
+              dir="ltr"
+              autocomplete="new-password"
+              placeholder="••••••••"
+            />
+          </div>
+          <div class="auth-field">
+            <label for="forgotConfirmPasswordInput" class="auth-label">تکرار رمز عبور جدید</label>
+            <input
+              id="forgotConfirmPasswordInput"
+              type="password"
+              class="auth-input"
+              dir="ltr"
+              autocomplete="new-password"
+              placeholder="••••••••"
+            />
+          </div>
+          <button type="submit" id="forgotResetSubmitBtn" class="auth-submit-btn">
+            <span class="btn-label">ذخیره رمز عبور جدید</span>
+          </button>
+        </form>
+
+        <div class="auth-link-row">
+          <button type="button" id="backToLoginBtn" class="auth-text-btn">بازگشت به صفحه ورود</button>
+        </div>
+      </div>
+
+      <p class="auth-hint">فقط کاربران مجاز هر طبقه و مدیر سیستم امکان ورود دارند.</p>
+    </div>
+  </div>
+
+  <script>
+    const appShell = document.getElementById('appShell');
+    const userSessionBar = document.getElementById('userSessionBar');
+    const authUsername = document.getElementById('authUsername');
+    const authFloorBadge = document.getElementById('authFloorBadge');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const loginModal = document.getElementById('loginModal');
+    const loginErrorAlert = document.getElementById('loginErrorAlert');
+    const loginErrorText = document.getElementById('loginErrorText');
+    const loginErrorCode = document.getElementById('loginErrorCode');
+    const loginForm = document.getElementById('loginForm');
+    const loginUsername = document.getElementById('loginUsername');
+    const loginUsernameError = document.getElementById('loginUsernameError');
+    const loginPassword = document.getElementById('loginPassword');
+    const loginPasswordError = document.getElementById('loginPasswordError');
+    const togglePasswordBtn = document.getElementById('togglePasswordBtn');
+    const loginSubmitBtn = document.getElementById('loginSubmitBtn');
+    const loginModalTitle = document.getElementById('loginModalTitle');
+    const loginModalDesc = document.getElementById('loginModalDesc');
+    const openForgotBtn = document.getElementById('openForgotBtn');
+    const forgotPasswordSection = document.getElementById('forgotPasswordSection');
+    const forgotEmailForm = document.getElementById('forgotEmailForm');
+    const forgotEmailInput = document.getElementById('forgotEmailInput');
+    const forgotOtpForm = document.getElementById('forgotOtpForm');
+    const forgotOtpInput = document.getElementById('forgotOtpInput');
+    const forgotResetForm = document.getElementById('forgotResetForm');
+    const forgotNewPasswordInput = document.getElementById('forgotNewPasswordInput');
+    const forgotConfirmPasswordInput = document.getElementById('forgotConfirmPasswordInput');
+    const backToLoginBtn = document.getElementById('backToLoginBtn');
+    const otpPill1 = document.getElementById('otpPill1');
+    const otpPill2 = document.getElementById('otpPill2');
+    const otpPill3 = document.getElementById('otpPill3');
+
+    const adminPanel = document.getElementById('adminPanel');
+    const adminRefreshBtn = document.getElementById('adminRefreshBtn');
+    const topologyFlow = document.getElementById('topologyFlow');
+    const telemetryTimestamp = document.getElementById('telemetryTimestamp');
+    const hwCpuPct = document.getElementById('hwCpuPct');
+    const hwCpuBar = document.getElementById('hwCpuBar');
+    const hwCpuSub = document.getElementById('hwCpuSub');
+    const hwRamPct = document.getElementById('hwRamPct');
+    const hwRamBar = document.getElementById('hwRamBar');
+    const hwRamSub = document.getElementById('hwRamSub');
+    const hwGpuPct = document.getElementById('hwGpuPct');
+    const hwGpuBar = document.getElementById('hwGpuBar');
+    const hwGpuSub = document.getElementById('hwGpuSub');
+    const adminUserList = document.getElementById('adminUserList');
+    const adminUserFeedback = document.getElementById('adminUserFeedback');
+
+    let adminPollTimer = null;
+    let forgotFlowEmail = '';
+    let forgotFlowOtp = '';
+
+    const micBtn = document.getElementById('micBtn');
+    const connectionBadge = document.getElementById('connectionBadge');
+    const connectionLabel = document.getElementById('connectionLabel');
+    const statusText = document.getElementById('statusText');
+    const statusTag = document.getElementById('statusTag');
+    const transcriptText = document.getElementById('transcriptText');
+    const floorValue = document.getElementById('floorValue');
+    const actionValue = document.getElementById('actionValue');
+    const serviceValue = document.getElementById('serviceValue');
+    const entityValue = document.getElementById('entityValue');
+    const responseMessage = document.getElementById('responseMessage');
+    const responseMeta = document.getElementById('responseMeta');
+    const replayBtn = document.getElementById('replayBtn');
+    const micHint = document.getElementById('micHint');
+    const audioPlayer = document.getElementById('audioPlayer');
+
+    const AUTH_STORAGE_KEY = 'sb_voice_auth_v1';
+    const SAFE_AUDIO_URL_REGEX = /^\/play-response(?:\?id=[a-fA-F0-9]{1,32})?$/;
+
+    let authState = {
+      token: null,
+      username: '',
+      role: 'resident',
+      floor: null,
+      allowed_floors: []
+    };
+    let isVerifyingSession = false;
+    let isAuthenticating = false;
+    let isLoggingOut = false;
+
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isPressActive = false;
+    let isStartingRecording = false;
+    let isRecording = false;
+    let isRecordingCancelled = false;
+    let isProcessing = false;
+    let stageTimers = [];
+    let lastAudioUrl = '';
+    let activeProcessAbortController = null;
+    let activeAudioAbortController = null;
+    let activeAudioObjectUrl = null;
+    let audioFetchSeq = 0;
+
+    function toPersianDigits(value) {
+      return String(value).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]);
+    }
+
+    function normalizeFloorValue(rawFloor, rawRole = '', rawAllowedFloors = null) {
+      const roleStr = typeof rawRole === 'string' ? rawRole.trim().toLowerCase() : '';
+      if (roleStr === 'admin') return 'all';
+
+      if (Array.isArray(rawAllowedFloors) && rawAllowedFloors.length > 0) {
+        const normalizedList = rawAllowedFloors
+          .map(item => normalizeFloorValue(item, '', null))
+          .filter(v => v === 1 || v === 2);
+        if (normalizedList.includes(1) && normalizedList.includes(2)) return 'all';
+        if (normalizedList.length === 1 && (rawFloor === undefined || rawFloor === null)) {
+          return normalizedList[0];
+        }
+      }
+
+      if (rawFloor === null || rawFloor === undefined) {
+        return roleStr === 'admin' ? 'all' : null;
+      }
+      if (Array.isArray(rawFloor)) {
+        const normalizedList = rawFloor
+          .map(item => normalizeFloorValue(item, '', null))
+          .filter(v => v === 1 || v === 2);
+        if (normalizedList.includes(1) && normalizedList.includes(2)) return 'all';
+        if (normalizedList.length === 1) return normalizedList[0];
+        return null;
+      }
+
+      const str = String(rawFloor)
+        .trim()
+        .toLowerCase()
+        .replace(/[۱۲١٢]/g, d => ({ '۱': '1', '١': '1', '۲': '2', '٢': '2' }[d] || d));
+      if (str === 'all' || str === 'admin' || str === '0' || str === '*') return 'all';
+      if (str === '1') return 1;
+      if (str === '2') return 2;
+      return null;
+    }
+
+    function normalizeAllowedFloors(rawAllowedFloors, normalizedFloor) {
+      if (Array.isArray(rawAllowedFloors) && rawAllowedFloors.length > 0) {
+        const floors = Array.from(new Set(
+          rawAllowedFloors
+            .map(item => normalizeFloorValue(item, '', null))
+            .filter(v => v === 1 || v === 2)
+        )).sort((a, b) => a - b);
+        if (floors.length > 0) return floors;
+      }
+      if (normalizedFloor === 'all') return [1, 2];
+      if (normalizedFloor === 1) return [1];
+      if (normalizedFloor === 2) return [2];
+      return [];
+    }
+
+    function buildSessionObject(raw, fallbackToken = '', fallbackUsername = '') {
+      if (!raw || typeof raw !== 'object') return null;
+      const rawToken = raw.token || raw.access_token || fallbackToken;
+      const token = typeof rawToken === 'string' ? rawToken.trim() : '';
+      const rawUser = typeof raw.username === 'string' && raw.username.trim()
+        ? raw.username.trim()
+        : fallbackUsername;
+      const username = typeof rawUser === 'string' ? rawUser.trim() : '';
+      const rawRole = typeof raw.role === 'string' ? raw.role.trim().toLowerCase() : '';
+      const floor = normalizeFloorValue(
+        raw.floor !== undefined ? raw.floor : (raw.assigned_floor !== undefined ? raw.assigned_floor : raw.allowed_floors),
+        rawRole,
+        raw.allowed_floors
+      );
+      if (!token || !username || !floor) return null;
+      const allowed_floors = normalizeAllowedFloors(raw.allowed_floors, floor);
+      if (allowed_floors.length === 0) return null;
+      const role = floor === 'all' ? 'admin' : (rawRole === 'user' ? 'user' : 'resident');
+      return {
+        token,
+        username,
+        role,
+        floor,
+        allowed_floors
+      };
+    }
+
+    function formatFloorBadge(floor) {
+      if (floor === 'all') return { text: 'ادمین (همه طبقات)', isAdmin: true };
+      if (floor === 2) return { text: 'طبقه ۲', isAdmin: false };
+      return { text: 'طبقه ۱', isAdmin: false };
+    }
+
+    function saveAuthSession(session) {
+      try {
+        sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+          token: session.token,
+          username: session.username,
+          role: session.role,
+          floor: session.floor,
+          allowed_floors: session.allowed_floors
+        }));
+      } catch (_) {}
+    }
+
+    function loadAuthSession() {
+      try {
+        const raw = sessionStorage.getItem(AUTH_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return buildSessionObject(parsed);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function clearAuthSession() {
+      authState = {
+        token: null,
+        username: '',
+        role: 'resident',
+        floor: null,
+        allowed_floors: []
+      };
+      try {
+        sessionStorage.removeItem(AUTH_STORAGE_KEY);
+      } catch (_) {}
+    }
+
+    function isAuthenticated() {
+      return Boolean(authState && authState.token);
+    }
+
+    function isAuthModalOpen() {
+      return Boolean(loginModal && !loginModal.hidden);
+    }
+
+    function canUseVoiceController() {
+      return isAuthenticated() && !isVerifyingSession && !isAuthModalOpen() && !isLoggingOut;
+    }
+
+    function isEditableOrModalTarget(target) {
+      if (!target || typeof target.closest !== 'function') return false;
+      return Boolean(target.closest('input, textarea, select, [contenteditable="true"], #loginModal'));
+    }
+
+    function setUIState(state, persianLabel, tagLabel) {
+      document.body.setAttribute('data-state', state);
+      statusText.textContent = persianLabel;
+      statusTag.textContent = tagLabel;
+    }
+
+    function setMicPressed(pressed) {
+      if (micBtn && typeof micBtn.setAttribute === 'function') {
+        micBtn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+      }
+    }
+
+    function setConnectionOnline(online) {
+      if (!connectionBadge || !connectionLabel) return;
+      if (online) {
+        connectionBadge.className = 'connection-badge';
+        connectionLabel.textContent = 'شبکه محلی فعال';
+      } else {
+        connectionBadge.className = 'connection-badge is-offline';
+        connectionLabel.textContent = 'ارتباط با سرور قطع است';
+      }
+    }
+
+    function setResponseMessage(text, variant = '', { assertive = false } = {}) {
+      if (!responseMessage) return;
+      responseMessage.textContent = text;
+      responseMessage.className = variant ? `response-message ${variant}` : 'response-message';
+      if (variant === 'is-error' || assertive) {
+        if (typeof responseMessage.setAttribute === 'function') {
+          responseMessage.setAttribute('role', 'alert');
+          responseMessage.setAttribute('aria-live', 'assertive');
+        }
+      } else {
+        if (typeof responseMessage.removeAttribute === 'function') {
+          responseMessage.removeAttribute('role');
+        }
+        if (typeof responseMessage.setAttribute === 'function') {
+          responseMessage.setAttribute('aria-live', 'polite');
+        }
+      }
+    }
+
+    function setResponseMeta(text, variant = '') {
+      if (!responseMeta) return;
+      if (!text) {
+        responseMeta.textContent = '';
+        responseMeta.className = 'response-meta ltr';
+        responseMeta.hidden = true;
+        return;
+      }
+      responseMeta.textContent = text;
+      responseMeta.className = variant ? `response-meta ltr ${variant}` : 'response-meta ltr';
+      responseMeta.hidden = false;
+    }
+
+    function showReplayButton(audioUrl) {
+      lastAudioUrl = audioUrl || '';
+      if (replayBtn) {
+        replayBtn.hidden = !lastAudioUrl;
+      }
+    }
+
+    function hideReplayButton() {
+      lastAudioUrl = '';
+      if (replayBtn) {
+        replayBtn.hidden = true;
+      }
+    }
+
+    function revokeCurrentAudioObjectUrl() {
+      if (activeAudioObjectUrl) {
+        URL.revokeObjectURL(activeAudioObjectUrl);
+        activeAudioObjectUrl = null;
+      }
+    }
+
+    function stopActiveAudio(shouldRevoke = true) {
+      if (activeAudioAbortController) {
+        activeAudioAbortController.abort();
+        activeAudioAbortController = null;
+      }
+      if (!audioPlayer) {
+        if (shouldRevoke) revokeCurrentAudioObjectUrl();
+        return;
+      }
+      audioPlayer.onended = null;
+      audioPlayer.onerror = null;
+      if (typeof audioPlayer.pause === 'function') {
+        audioPlayer.pause();
+      }
+      if (shouldRevoke) {
+        if (typeof audioPlayer.removeAttribute === 'function') {
+          audioPlayer.removeAttribute('src');
+        } else {
+          audioPlayer.src = '';
+        }
+        if (typeof audioPlayer.load === 'function') {
+          audioPlayer.load();
+        }
+        revokeCurrentAudioObjectUrl();
+      }
+    }
+
+    function resetTelemetryDisplay() {
+      transcriptText.textContent = '—';
+      floorValue.textContent = '—';
+      floorValue.className = 'metric-value';
+      actionValue.textContent = '—';
+      actionValue.className = 'metric-value';
+      if (actionValue.style) actionValue.style.color = '';
+      serviceValue.textContent = '—';
+      entityValue.textContent = '—';
+      hideReplayButton();
+    }
+
+    function resetDashboardToInitialCopy() {
+      resetTelemetryDisplay();
+      transcriptText.textContent = 'دکمه میکروفون را نگه دارید و فرمان خود را بگویید...';
+      setResponseMessage('در انتظار فرمان...');
+      setResponseMeta('');
+      setUIState('idle', 'آماده دریافت فرمان صوتی', 'IDLE');
+    }
+
+    function resetPasswordVisibility() {
+      if (loginPassword) {
+        loginPassword.type = 'password';
+      }
+      if (togglePasswordBtn) {
+        togglePasswordBtn.setAttribute('aria-pressed', 'false');
+        togglePasswordBtn.setAttribute('aria-label', 'نمایش رمز عبور');
+        const eyeOpen = togglePasswordBtn.querySelector('.icon-eye-open');
+        const eyeClosed = togglePasswordBtn.querySelector('.icon-eye-closed');
+        if (eyeOpen) eyeOpen.hidden = false;
+        if (eyeClosed) eyeClosed.hidden = true;
+      }
+    }
+
+    function setFieldError(inputEl, errorEl, message) {
+      if (inputEl && typeof inputEl.setAttribute === 'function') {
+        inputEl.setAttribute('aria-invalid', 'true');
+      }
+      if (errorEl) {
+        errorEl.textContent = message;
+        errorEl.hidden = false;
+      }
+    }
+
+    function clearFieldError(inputEl, errorEl) {
+      if (inputEl && typeof inputEl.setAttribute === 'function') {
+        inputEl.setAttribute('aria-invalid', 'false');
+      }
+      if (errorEl) {
+        errorEl.textContent = '';
+        errorEl.hidden = true;
+      }
+    }
+
+    function resetLoginFieldErrors() {
+      clearFieldError(loginUsername, loginUsernameError);
+      clearFieldError(loginPassword, loginPasswordError);
+    }
+
+    function showLoginAlert(message, code = '', variant = 'error') {
+      if (!loginErrorAlert || !loginErrorText) return;
+      loginErrorAlert.className = variant === 'success' ? 'auth-alert is-success' : 'auth-alert';
+      loginErrorText.textContent = message;
+      if (loginErrorCode) {
+        if (code) {
+          loginErrorCode.textContent = code;
+          loginErrorCode.hidden = false;
+        } else {
+          loginErrorCode.textContent = '';
+          loginErrorCode.hidden = true;
+        }
+      }
+      loginErrorAlert.hidden = false;
+    }
+
+    function hideLoginAlert() {
+      if (loginErrorText) loginErrorText.textContent = '';
+      if (loginErrorCode) {
+        loginErrorCode.textContent = '';
+        loginErrorCode.hidden = true;
+      }
+      if (loginErrorAlert) {
+        loginErrorAlert.className = 'auth-alert';
+        loginErrorAlert.hidden = true;
+      }
+    }
+
+    function setForgotMode(enabled, step = 1) {
+      if (loginForm) loginForm.hidden = enabled;
+      if (forgotPasswordSection) forgotPasswordSection.hidden = !enabled;
+      if (!enabled) {
+        if (loginModalTitle) loginModalTitle.textContent = 'ورود به پنل کنترل صوتی';
+        if (loginModalDesc) loginModalDesc.textContent = 'برای کنترل تجهیزات ساختمان هوشمند وارد شوید';
+        forgotFlowEmail = '';
+        forgotFlowOtp = '';
+        if (forgotEmailInput) forgotEmailInput.value = '';
+        if (forgotOtpInput) forgotOtpInput.value = '';
+        if (forgotNewPasswordInput) forgotNewPasswordInput.value = '';
+        if (forgotConfirmPasswordInput) forgotConfirmPasswordInput.value = '';
+        return;
+      }
+      if (loginModalTitle) loginModalTitle.textContent = 'بازیابی رمز عبور';
+      if (loginModalDesc) loginModalDesc.textContent = 'کد تایید ۶ رقمی به ایمیل ثبت‌شده ارسال می‌شود';
+      if (forgotEmailForm) forgotEmailForm.hidden = step !== 1;
+      if (forgotOtpForm) forgotOtpForm.hidden = step !== 2;
+      if (forgotResetForm) forgotResetForm.hidden = step !== 3;
+      if (otpPill1) otpPill1.className = step === 1 ? 'otp-step-pill is-active' : 'otp-step-pill';
+      if (otpPill2) otpPill2.className = step === 2 ? 'otp-step-pill is-active' : 'otp-step-pill';
+      if (otpPill3) otpPill3.className = step === 3 ? 'otp-step-pill is-active' : 'otp-step-pill';
+    }
+
+    function setLoginSubmitting(busy) {
+      isAuthenticating = Boolean(busy);
+      if (loginUsername) loginUsername.readOnly = isAuthenticating;
+      if (loginPassword) loginPassword.readOnly = isAuthenticating;
+      if (togglePasswordBtn) togglePasswordBtn.disabled = isAuthenticating;
+      if (loginSubmitBtn) {
+        loginSubmitBtn.disabled = isAuthenticating;
+        loginSubmitBtn.setAttribute('aria-busy', isAuthenticating ? 'true' : 'false');
+        const spinner = loginSubmitBtn.querySelector('.btn-spinner');
+        const label = loginSubmitBtn.querySelector('.btn-label');
+        if (spinner) spinner.hidden = !isAuthenticating;
+        if (label) label.textContent = isAuthenticating ? 'در حال احراز هویت...' : 'ورود به پنل';
+      }
+    }
+
+    function openLoginModal({ alertText = '', alertCode = '', clearUsername = false } = {}) {
+      stopAdminDashboard();
+      setForgotMode(false);
+      document.body.setAttribute('data-auth', 'unauthenticated');
+      if (appShell) {
+        appShell.inert = true;
+        appShell.setAttribute('aria-hidden', 'true');
+      }
+      if (userSessionBar) userSessionBar.hidden = true;
+      if (micBtn) micBtn.disabled = true;
+
+      if (clearUsername && loginUsername) loginUsername.value = '';
+      if (loginPassword) loginPassword.value = '';
+      resetPasswordVisibility();
+      resetLoginFieldErrors();
+
+      if (alertText) {
+        showLoginAlert(alertText, alertCode);
+      } else {
+        hideLoginAlert();
+      }
+
+      if (loginModal) loginModal.hidden = false;
+      requestAnimationFrame(() => {
+        if (loginUsername) loginUsername.focus();
+      });
+    }
+
+    function applyAuthenticatedView(session, { focusMic = false } = {}) {
+      authState = session;
+      document.body.setAttribute('data-auth', 'authenticated');
+
+      if (authUsername) authUsername.textContent = session.username;
+      if (authFloorBadge) {
+        const badge = formatFloorBadge(session.floor);
+        authFloorBadge.textContent = badge.text;
+        authFloorBadge.className = badge.isAdmin ? 'floor-badge is-admin' : 'floor-badge';
+      }
+
+      if (userSessionBar) userSessionBar.hidden = false;
+      if (loginPassword) loginPassword.value = '';
+      resetPasswordVisibility();
+      if (loginModal) loginModal.hidden = true;
+      hideLoginAlert();
+      resetLoginFieldErrors();
+
+      if (appShell) {
+        appShell.inert = false;
+        appShell.removeAttribute('aria-hidden');
+      }
+      if (micBtn) micBtn.disabled = isProcessing;
+      if (session.role === 'admin') {
+        startAdminDashboard();
+      } else {
+        stopAdminDashboard();
+      }
+      if (focusMic && micBtn) {
+        requestAnimationFrame(() => micBtn.focus());
+      }
+    }
+
+    function cancelActiveRecording() {
+      isPressActive = false;
+      isStartingRecording = false;
+      setMicPressed(false);
+      if (micHint) micHint.textContent = 'نگه دارید، صحبت کنید و سپس رها کنید';
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        isRecordingCancelled = true;
+        mediaRecorder.ondataavailable = null;
+        mediaRecorder.onstop = null;
+        try {
+          if (mediaRecorder.stream && typeof mediaRecorder.stream.getTracks === 'function') {
+            mediaRecorder.stream.getTracks().forEach(track => track.stop());
+          }
+        } catch (_) {}
+        try {
+          mediaRecorder.stop();
+        } catch (_) {}
+      }
+      isRecording = false;
+    }
+
+    function handleSessionExpired(errorCode = 'TOKEN_EXPIRED') {
+      audioFetchSeq += 1;
+      if (activeProcessAbortController) {
+        activeProcessAbortController.abort();
+        activeProcessAbortController = null;
+      }
+      clearStageTimers();
+      isProcessing = false;
+      cancelActiveRecording();
+      stopActiveAudio(true);
+      clearAuthSession();
+      resetDashboardToInitialCopy();
+
+      const message = errorCode === 'TOKEN_EXPIRED'
+        ? 'نشست کاربری شما منقضی شده است. لطفاً دوباره وارد شوید.'
+        : 'احراز هویت شما معتبر نیست یا پایان یافته است. لطفاً دوباره وارد شوید.';
+      openLoginModal({ alertText: message, alertCode: errorCode, clearUsername: false });
+    }
+
+    function handleLogout() {
+      if (isLoggingOut) return;
+      isLoggingOut = true;
+      try {
+        audioFetchSeq += 1;
+        if (activeProcessAbortController) {
+          activeProcessAbortController.abort();
+          activeProcessAbortController = null;
+        }
+        clearStageTimers();
+        isProcessing = false;
+        cancelActiveRecording();
+        stopActiveAudio(true);
+        clearAuthSession();
+        resetDashboardToInitialCopy();
+        openLoginModal({ clearUsername: true });
+      } finally {
+        isLoggingOut = false;
+      }
+    }
+
+    function validateAudioUrl(rawUrl) {
+      if (typeof rawUrl !== 'string') return null;
+      const trimmed = rawUrl.trim();
+      return SAFE_AUDIO_URL_REGEX.test(trimmed) ? trimmed : null;
+    }
+
+    function createFriendlyError(message, metaText = '', errorCode = '') {
+      const err = new Error(message);
+      err.isFriendlyError = true;
+      err.metaText = metaText;
+      err.errorCode = errorCode;
+      return err;
+    }
+
+    function sanitizeRawTextSnippet(rawText, maxLength = 140) {
+      if (typeof rawText !== 'string') return '';
+      const stripped = rawText
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!stripped) return '';
+      return stripped.length > maxLength ? `${stripped.slice(0, maxLength)}...` : stripped;
+    }
+
+    function extractPayloadFromParsed(parsed) {
+      return (
+        parsed &&
+        typeof parsed.detail === 'object' &&
+        parsed.detail !== null &&
+        !Array.isArray(parsed.detail)
+      ) ? parsed.detail : parsed;
+    }
+
+    function buildFloorForbiddenMessage(payload) {
+      const code = payload && typeof payload.error_code === 'string' ? payload.error_code.trim() : '';
+      const cleanDetail = payload && typeof payload.detail === 'string'
+        ? sanitizeRawTextSnippet(payload.detail, 200)
+        : '';
+
+      if (code === 'AUDIO_FORBIDDEN') {
+        return cleanDetail || 'شما مجوز دسترسی به این پاسخ صوتی را ندارید.';
+      }
+      if (authState.floor === 1) {
+        return 'شما فقط مجاز به کنترل تجهیزات طبقه ۱ هستید و اجازه اجرای فرمان برای طبقه ۲ را ندارید.';
+      }
+      if (authState.floor === 2) {
+        return 'شما فقط مجاز به کنترل تجهیزات طبقه ۲ هستید و اجازه اجرای فرمان برای طبقه ۱ را ندارید.';
+      }
+      return cleanDetail || 'شما مجوز کنترل تجهیزات این طبقه را ندارید.';
+    }
+
+    function handleFloorForbiddenError(parsedPayload = null, status = 403) {
+      const payload = (parsedPayload && typeof parsedPayload === 'object' && !Array.isArray(parsedPayload))
+        ? extractPayloadFromParsed(parsedPayload)
+        : {};
+      const errorCode = (typeof payload.error_code === 'string' && payload.error_code.trim())
+        ? payload.error_code.trim()
+        : 'FLOOR_FORBIDDEN';
+      const stage = (typeof payload.stage === 'string' && payload.stage.trim())
+        ? payload.stage.trim()
+        : 'auth';
+
+      if (typeof payload.transcript === 'string' && payload.transcript.trim()) {
+        transcriptText.textContent = payload.transcript.trim();
+      }
+      const reqFloor = normalizeFloorValue(payload.requested_floor, '', null);
+      if (reqFloor === 1 || reqFloor === 2) {
+        floorValue.textContent = `طبقه ${toPersianDigits(reqFloor)} (غیرمجاز)`;
+      } else {
+        floorValue.textContent = 'غیرمجاز';
+      }
+      floorValue.className = 'metric-value is-warning';
+
+      actionValue.textContent = 'مجوز رد شد (۴۰۳)';
+      actionValue.className = 'metric-value is-warning';
+
+      const statusLabel = errorCode === 'AUDIO_FORBIDDEN'
+        ? 'دسترسی به این پاسخ صوتی مجاز نیست'
+        : 'دسترسی به این طبقه مجاز نیست';
+      setUIState('warning', statusLabel, 'FORBIDDEN');
+      setResponseMessage(buildFloorForbiddenMessage(payload), 'is-warning', { assertive: true });
+      setResponseMeta(`HTTP ${status} · stage:${stage} · ${errorCode}`, 'is-warning');
+    }
+
+    function formatBackendJsonError(status, parsed) {
+      const payload = extractPayloadFromParsed(parsed);
+
+      const rawDetail = typeof payload.detail === 'string' ? payload.detail : '';
+      const cleanDetail = sanitizeRawTextSnippet(rawDetail, 160);
+      const errorCode = typeof payload.error_code === 'string' ? payload.error_code.trim() : '';
+      const stage = typeof payload.stage === 'string' ? payload.stage.trim() : '';
+      const ollamaRunning = payload.ollama_running;
+      const requestedModel = typeof payload.requested_model === 'string' ? payload.requested_model.trim() : '';
+      const hasAvailableModels = Array.isArray(payload.available_models);
+      const availableModels = hasAvailableModels
+        ? payload.available_models.filter(m => typeof m === 'string' && m.trim()).map(m => m.trim())
+        : [];
+
+      const metaParts = [`HTTP ${status}`];
+      if (stage) metaParts.push(`stage:${stage}`);
+      if (errorCode) metaParts.push(errorCode);
+      if (requestedModel) metaParts.push(`model:${requestedModel}`);
+      if (ollamaRunning === false) metaParts.push('ollama:offline');
+      if (availableModels.length > 0) metaParts.push(`available:[${availableModels.join(', ')}]`);
+      if (cleanDetail) metaParts.push(cleanDetail);
+      const metaText = metaParts.join(' · ');
+
+      if (ollamaRunning === false || errorCode === 'OLLAMA_UNREACHABLE') {
+        return createFriendlyError(
+          'سرویس هوش مصنوعی Ollama در حال اجرا نیست یا در دسترس نمی‌باشد. لطفاً سرویس Ollama را اجرا کرده و دوباره تلاش کنید.',
+          metaText,
+          errorCode || 'OLLAMA_UNREACHABLE'
+        );
+      }
+
+      if (errorCode === 'MODEL_NOT_FOUND') {
+        const parts = [
+          requestedModel
+            ? `مدل هوش مصنوعی «${requestedModel}» در Ollama یافت نشد.`
+            : 'مدل هوش مصنوعی درخواستی در Ollama یافت نشد.'
+        ];
+        if (availableModels.length > 0) {
+          parts.push(`مدل‌های موجود: ${availableModels.join('، ')}`);
+        } else if (hasAvailableModels) {
+          parts.push('هیچ مدلی روی Ollama نصب نیست.');
+        }
+        return createFriendlyError(parts.join('\n'), metaText, errorCode);
+      }
+
+      const errorMessageMap = {
+        EMPTY_AUDIO_FILE: 'فایل صوتی ارسالی خالی است. لطفاً دکمه میکروفون را نگه دارید و صحبت کنید.',
+        EMPTY_AUDIO: 'فایل صوتی ارسالی خالی است. لطفاً دکمه میکروفون را نگه دارید و صحبت کنید.',
+        EMPTY_TRANSCRIPT: 'صدایی تشخیص داده نشد. لطفاً نزدیک‌تر به میکروفون و واضح‌تر صحبت کنید.',
+        NO_SPEECH: 'صدایی تشخیص داده نشد. لطفاً نزدیک‌تر به میکروفون و واضح‌تر صحبت کنید.',
+        STT_MODEL_NOT_INITIALIZED: 'مدل تشخیص گفتار هنوز آماده نیست. لطفاً چند لحظه دیگر دوباره تلاش کنید.',
+        STT_TRANSCRIPTION_FAILED: 'تبدیل گفتار به متن با خطا مواجه شد. لطفاً دوباره صحبت کنید.',
+        STT_UNEXPECTED_ERROR: 'تبدیل گفتار به متن با خطا مواجه شد. لطفاً دوباره صحبت کنید.',
+        STT_FAILED: 'تبدیل گفتار به متن با خطا مواجه شد. لطفاً دوباره صحبت کنید.',
+        STT_ERROR: 'تبدیل گفتار به متن با خطا مواجه شد. لطفاً دوباره صحبت کنید.',
+        LLM_INVALID_JSON: 'مدل هوش مصنوعی نتوانست فرمان را به شکل معتبر تحلیل کند. لطفاً فرمان را واضح‌تر و ساده‌تر بیان کنید.',
+        OLLAMA_CHAT_ERROR: 'تحلیل فرمان توسط مدل هوش مصنوعی با خطا مواجه شد. لطفاً دوباره تلاش کنید.',
+        LLM_UNEXPECTED_ERROR: 'تحلیل فرمان توسط مدل هوش مصنوعی با خطا مواجه شد. لطفاً دوباره تلاش کنید.',
+        LLM_FAILED: 'تحلیل فرمان توسط مدل هوش مصنوعی با خطا مواجه شد. لطفاً دوباره تلاش کنید.',
+        LLM_ERROR: 'تحلیل فرمان توسط مدل هوش مصنوعی با خطا مواجه شد. لطفاً دوباره تلاش کنید.',
+        AUDIO_UPLOAD_ERROR: 'دریافت فایل صوتی در سرور با خطا مواجه شد. لطفاً دوباره ضبط کنید.',
+        UPLOAD_STORAGE_ERROR: 'ذخیره‌سازی موقت فایل صوتی در سرور با خطا مواجه شد.',
+        PAYLOAD_TOO_LARGE: 'حجم فایل صوتی ارسالی بیش از حد مجاز است. لطفاً فرمان کوتاه‌تری ضبط کنید.',
+        INVALID_CREDENTIALS: 'نام کاربری یا رمز عبور اشتباه است.',
+        TOKEN_EXPIRED: 'نشست کاربری شما منقضی شده است. لطفاً دوباره وارد شوید.',
+        FLOOR_FORBIDDEN: 'شما مجاز به کنترل تجهیزات این طبقه نیستید.',
+        AUDIO_FORBIDDEN: 'شما مجوز دسترسی به این پاسخ صوتی را ندارید.',
+        AUDIO_NOT_FOUND: 'فایل صوتی پاسخ یافت نشد یا منقضی شده است.',
+        RATE_LIMITED: 'تعداد تلاش‌های ورود بیش از حد مجاز است. لطفاً کمی بعد دوباره تلاش کنید.',
+        UNAUTHORIZED: 'احراز هویت با سرور انجام نشد. لطفاً دوباره وارد شوید.',
+        HA_UNREACHABLE: 'ارتباط با سیستم هوشمند این طبقه قطع است و در حال حاضر دسترسی ندارم.',
+        HA_UNAUTHORIZED: 'احراز هویت با سیستم هوشمند این طبقه ناموفق بود. توکن دسترسی را بررسی کنید.',
+        HA_EXECUTION_ERROR: 'اجرای فرمان در سیستم خانه هوشمند با خطا مواجه شد. لطفاً ارتباط با تجهیزات را بررسی کنید.',
+        VALIDATION_ERROR: 'اطلاعات ارسالی به سرور معتبر نبود. لطفاً دوباره تلاش کنید.',
+        PROCESS_AUDIO_INTERNAL_ERROR: 'خطای داخلی در سرور رخ داد. لطفاً وضعیت سرور را بررسی کرده و دوباره تلاش کنید.',
+        INTERNAL_SERVER_ERROR: 'خطای داخلی در سرور رخ داد. لطفاً وضعیت سرور را بررسی کرده و دوباره تلاش کنید.',
+        INTERNAL_ERROR: 'خطای داخلی در سرور رخ داد. لطفاً وضعیت سرور را بررسی کرده و دوباره تلاش کنید.'
+      };
+
+      if (errorCode && Object.prototype.hasOwnProperty.call(errorMessageMap, errorCode)) {
+        return createFriendlyError(errorMessageMap[errorCode], metaText, errorCode);
+      }
+
+      if (errorCode && errorCode.startsWith('HTTP_')) {
+        return createFriendlyError(
+          'درخواست ارسالی توسط سرور رد شد یا مسیر مورد نظر در دسترس نبود. لطفاً دوباره تلاش کنید.',
+          metaText,
+          errorCode
+        );
+      }
+
+      return createFriendlyError(
+        'خطایی در پردازش فرمان صوتی رخ داد. لطفاً دوباره تلاش کنید.',
+        metaText,
+        errorCode || 'INTERNAL_ERROR'
+      );
+    }
+
+    async function readJsonPayloadSafely(response) {
+      let rawText = '';
+      try {
+        rawText = await response.text();
+      } catch (err) {
+        if (err && err.name === 'AbortError') {
+          throw err;
+        }
+        return { rawText: '', parsed: null, readFailed: true };
+      }
+      let parsed = null;
+      try {
+        parsed = rawText ? JSON.parse(rawText) : null;
+      } catch (_) {
+        parsed = null;
+      }
+      return { rawText, parsed, readFailed: false };
+    }
+
+    async function parseErrorResponse(response) {
+      const { rawText, parsed, readFailed } = await readJsonPayloadSafely(response);
+      if (readFailed) {
+        return createFriendlyError(
+          'دریافت پاسخ خطا از سرور امکان‌پذیر نبود. لطفاً دوباره تلاش کنید.',
+          `HTTP ${response.status} · BODY_READ_FAILED`,
+          'BODY_READ_FAILED'
+        );
+      }
+
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return formatBackendJsonError(response.status, parsed);
+      }
+
+      const snippet = sanitizeRawTextSnippet(rawText);
+      const metaText = snippet
+        ? `HTTP ${response.status} · NON_JSON_RESPONSE · ${snippet}`
+        : `HTTP ${response.status} · NON_JSON_RESPONSE`;
+      return createFriendlyError(
+        'پاسخ معتبری از سرور دریافت نشد. لطفاً وضعیت سرویس را بررسی کرده و دوباره تلاش کنید.',
+        metaText,
+        'NON_JSON_RESPONSE'
+      );
+    }
+
+    function clearStageTimers() {
+      stageTimers.forEach(t => clearTimeout(t));
+      stageTimers = [];
+    }
+
+    async function startRecording(e) {
+      if (isEditableOrModalTarget(e?.target) || !canUseVoiceController()) return;
+      if (e) e.preventDefault();
+      if (isProcessing || isRecording || isStartingRecording || (micBtn && micBtn.disabled)) return;
+
+      isPressActive = true;
+      isStartingRecording = true;
+      isRecordingCancelled = false;
+      setMicPressed(true);
+      let activeStream = null;
+
+      try {
+        stopActiveAudio(true);
+        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+          throw new Error('MediaDevices API unavailable');
+        }
+        activeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        if (!isPressActive || isProcessing || !canUseVoiceController()) {
+          activeStream.getTracks().forEach(track => track.stop());
+          activeStream = null;
+          isStartingRecording = false;
+          setMicPressed(false);
+          return;
+        }
+
+        const mimeType = (
+          typeof MediaRecorder !== 'undefined' &&
+          typeof MediaRecorder.isTypeSupported === 'function' &&
+          MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        )
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm';
+
+        mediaRecorder = new MediaRecorder(activeStream, { mimeType });
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) {
+            audioChunks.push(event.data);
+          }
+        };
+
+        const streamToCleanup = activeStream;
+        mediaRecorder.onstop = async () => {
+          streamToCleanup.getTracks().forEach(track => track.stop());
+          isRecording = false;
+          setMicPressed(false);
+          if (isRecordingCancelled || !canUseVoiceController()) {
+            return;
+          }
+          const blob = new Blob(audioChunks, { type: 'audio/webm' });
+          if (blob.size < 800) {
+            resetTelemetryDisplay();
+            setResponseMessage('مدت زمان ضبط بسیار کوتاه بود. لطفاً دکمه را کمی بیشتر نگه دارید.', 'is-warning');
+            setResponseMeta('AUDIO_TOO_SHORT', 'is-warning');
+            setUIState('warning', 'زمان ضبط بسیار کوتاه بود', 'TOO SHORT');
+            return;
+          }
+          await sendAudioToBackend(blob);
+        };
+
+        mediaRecorder.start();
+        isRecording = true;
+        isStartingRecording = false;
+        setUIState('listening', 'در حال شنیدن صدای شما...', 'LISTENING');
+        if (micHint) micHint.textContent = 'در حال ضبط... پس از اتمام صحبت دکمه را رها کنید';
+      } catch (err) {
+        if (activeStream && typeof activeStream.getTracks === 'function') {
+          activeStream.getTracks().forEach(track => track.stop());
+        }
+        isPressActive = false;
+        isStartingRecording = false;
+        isRecording = false;
+        setMicPressed(false);
+        if (!canUseVoiceController()) return;
+        console.error('Microphone access error:', err);
+        resetTelemetryDisplay();
+        setResponseMessage('دسترسی به میکروفون امکان‌پذیر نیست. لطفاً مجوز میکروفون و اتصال امن مرورگر را بررسی کنید.', 'is-error');
+        setResponseMeta('MIC_ACCESS_ERROR', 'is-error');
+        setUIState('error', 'خطا در دسترسی به میکروفون', 'MIC ERROR');
+      }
+    }
+
+    function stopRecording(e) {
+      if (!isPressActive && !isRecording && !isStartingRecording) return;
+      if (e && !isEditableOrModalTarget(e.target)) e.preventDefault();
+
+      isPressActive = false;
+      setMicPressed(false);
+      if (micHint) micHint.textContent = 'نگه دارید، صحبت کنید و سپس رها کنید';
+
+      if (isRecording && mediaRecorder && mediaRecorder.state !== 'inactive') {
+        isRecording = false;
+        mediaRecorder.stop();
+      }
+    }
+
+    async function playAudioSource(rawAudioUrl, baseMessage, { preserveErrorState = false } = {}) {
+      const safeAudioUrl = validateAudioUrl(rawAudioUrl);
+      if (!safeAudioUrl || !canUseVoiceController() || !authState.token) return;
+
+      const seq = ++audioFetchSeq;
+      if (!preserveErrorState) {
+        setUIState('playing', 'در حال دریافت و پخش پاسخ صوتی...', 'PLAYING RESPONSE');
+      }
+      hideReplayButton();
+      stopActiveAudio(true);
+
+      const currentController = new AbortController();
+      activeAudioAbortController = currentController;
+
+      try {
+        const response = await fetch(safeAudioUrl, {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${authState.token}` },
+          cache: 'no-store',
+          signal: currentController.signal
+        });
+
+        if (seq !== audioFetchSeq || currentController.signal.aborted || !canUseVoiceController()) return;
+
+        if (response.status === 401) {
+          const errObj = await parseErrorResponse(response);
+          if (seq !== audioFetchSeq || currentController.signal.aborted || !canUseVoiceController()) return;
+          handleSessionExpired(errObj.errorCode || 'TOKEN_EXPIRED');
+          return;
+        }
+        if (response.status === 403) {
+          const { parsed } = await readJsonPayloadSafely(response);
+          if (seq !== audioFetchSeq || currentController.signal.aborted || !canUseVoiceController()) return;
+          handleFloorForbiddenError(parsed || { error_code: 'AUDIO_FORBIDDEN', stage: 'auth' }, 403);
+          return;
+        }
+        if (!response.ok) {
+          const errObj = await parseErrorResponse(response);
+          if (seq !== audioFetchSeq || currentController.signal.aborted || !canUseVoiceController()) return;
+          throw errObj;
+        }
+
+        const contentType = (response.headers && typeof response.headers.get === 'function'
+          ? (response.headers.get('content-type') || '')
+          : '').toLowerCase().trim();
+        if (!contentType.startsWith('audio/')) {
+          throw createFriendlyError(
+            'فرمت فایل صوتی دریافت‌شده معتبر نیست.',
+            `HTTP ${response.status} · INVALID_AUDIO_CONTENT_TYPE`,
+            'INVALID_AUDIO_CONTENT_TYPE'
+          );
+        }
+
+        const audioBlob = await response.blob();
+        if (seq !== audioFetchSeq || currentController.signal.aborted || !canUseVoiceController()) return;
+        if (!audioBlob || audioBlob.size === 0) {
+          throw createFriendlyError(
+            'فایل صوتی پاسخ خالی بود.',
+            'EMPTY_AUDIO_BLOB',
+            'EMPTY_AUDIO_BLOB'
+          );
+        }
+
+        revokeCurrentAudioObjectUrl();
+        const objectUrl = URL.createObjectURL(audioBlob);
+        activeAudioObjectUrl = objectUrl;
+
+        audioPlayer.onended = () => {
+          if (seq !== audioFetchSeq) return;
+          stopActiveAudio(true);
+          if (!currentController.signal.aborted && canUseVoiceController()) {
+            if (!preserveErrorState) {
+              setUIState('idle', 'آماده دریافت فرمان بعدی', 'IDLE');
+            }
+            showReplayButton(safeAudioUrl);
+          }
+        };
+        audioPlayer.onerror = () => {
+          if (seq !== audioFetchSeq) return;
+          stopActiveAudio(true);
+          if (currentController.signal.aborted || !canUseVoiceController()) return;
+          setResponseMessage(
+            `${baseMessage}\nفایل صوتی پاسخ بارگذاری نشد.`,
+            'is-warning'
+          );
+          setResponseMeta('AUDIO_LOAD_ERROR', 'is-warning');
+          setUIState('warning', 'فرمان اجرا شد (خطا در بارگذاری فایل صوتی)', 'AUDIO ERROR');
+          showReplayButton(safeAudioUrl);
+        };
+
+        audioPlayer.src = objectUrl;
+        await audioPlayer.play();
+        if (seq !== audioFetchSeq || currentController.signal.aborted || !canUseVoiceController()) return;
+      } catch (playErr) {
+        if (
+          (playErr && playErr.name === 'AbortError') ||
+          seq !== audioFetchSeq ||
+          currentController.signal.aborted ||
+          !canUseVoiceController()
+        ) {
+          return;
+        }
+        stopActiveAudio(true);
+        console.warn('Audio playback blocked or failed:', playErr);
+        if (playErr && playErr.name === 'NotAllowedError') {
+          setResponseMessage(
+            `${baseMessage}\nپخش خودکار صدا توسط مرورگر مسدود شد. برای شنیدن پاسخ، دکمه پخش مجدد را بزنید.`,
+            'is-warning'
+          );
+          setResponseMeta('AUTOPLAY BLOCKED', 'is-warning');
+          setUIState('warning', 'فرمان اجرا شد (نیاز به تایید پخش صدا)', 'AUTOPLAY BLOCKED');
+        } else {
+          setResponseMessage(
+            `${baseMessage}\nفایل صوتی پاسخ قابل پخش نبود.`,
+            'is-warning'
+          );
+          const errMeta = (playErr && playErr.errorCode) ? playErr.errorCode : 'AUDIO_PLAYBACK_ERROR';
+          setResponseMeta(errMeta, 'is-warning');
+          setUIState('warning', 'فرمان اجرا شد (خطا در پخش فایل صوتی)', 'AUDIO ERROR');
+        }
+        showReplayButton(safeAudioUrl);
+      } finally {
+        if (activeAudioAbortController === currentController) {
+          activeAudioAbortController = null;
+        }
+      }
+    }
+
+    async function sendAudioToBackend(audioBlob) {
+      if (isProcessing || !canUseVoiceController() || !authState.token) return;
+      isProcessing = true;
+      if (micBtn) micBtn.disabled = true;
+
+      clearStageTimers();
+      stopActiveAudio(true);
+      resetTelemetryDisplay();
+
+      // نمایش مراحل پردازش در رابط کاربری
+      setUIState('transcribing', 'در حال تبدیل گفتار به متن (Whisper)...', 'TRANSCRIBING');
+      setResponseMessage('در حال پردازش فرمان...');
+      setResponseMeta('');
+
+      stageTimers.push(setTimeout(() => {
+        if (canUseVoiceController() && isProcessing) {
+          setUIState('reasoning', 'تحلیل فرمان در مدل محلی (Qwen 3.5)...', 'REASONING');
+        }
+      }, 1100));
+      stageTimers.push(setTimeout(() => {
+        if (canUseVoiceController() && isProcessing) {
+          setUIState('executing', 'ارسال دستور به Home Assistant...', 'EXECUTING');
+        }
+      }, 2400));
+
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'command.webm');
+
+      const currentController = new AbortController();
+      activeProcessAbortController = currentController;
+
+      try {
+        const response = await fetch('/process-audio', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${authState.token}` },
+          body: formData,
+          signal: currentController.signal
+        });
+
+        if (currentController.signal.aborted || !canUseVoiceController()) return;
+        setConnectionOnline(true);
+        clearStageTimers();
+
+        if (response.status === 401) {
+          const errObj = await parseErrorResponse(response);
+          if (currentController.signal.aborted || !canUseVoiceController()) return;
+          handleSessionExpired(errObj.errorCode || 'UNAUTHORIZED');
+          return;
+        }
+
+        if (response.status === 403) {
+          const { parsed } = await readJsonPayloadSafely(response);
+          if (currentController.signal.aborted || !canUseVoiceController()) return;
+          handleFloorForbiddenError(parsed || { error_code: 'FLOOR_FORBIDDEN', stage: 'auth' }, 403);
+          return;
+        }
+
+        if (!response.ok) {
+          const { rawText, parsed, readFailed } = await readJsonPayloadSafely(response);
+          if (currentController.signal.aborted || !canUseVoiceController()) return;
+          const errObj = (!readFailed && parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+            ? formatBackendJsonError(response.status, parsed)
+            : createFriendlyError(
+              'پاسخ معتبری از سرور دریافت نشد.',
+              `HTTP ${response.status} · ${sanitizeRawTextSnippet(rawText) || 'ERROR'}`,
+              'HTTP_ERROR'
+            );
+          if (parsed && parsed.error_code === 'HA_UNREACHABLE') {
+            actionValue.textContent = 'آفلاین / عدم دسترسی';
+            actionValue.className = 'metric-value is-error';
+          }
+          const errAudioUrl = parsed && typeof parsed.audio_url === 'string'
+            ? validateAudioUrl(parsed.audio_url)
+            : null;
+          if (errAudioUrl) {
+            setUIState('error', 'خطا در پردازش فرمان', parsed?.error_code || 'ERROR');
+            setResponseMessage(errObj.message, 'is-error', { assertive: true });
+            setResponseMeta(errObj.metaText || '', 'is-error');
+            await playAudioSource(errAudioUrl, errObj.message, { preserveErrorState: true });
+            return;
+          }
+          throw errObj;
+        }
+
+        let data;
+        try {
+          data = await response.json();
+        } catch (jsonErr) {
+          if (
+            (jsonErr && jsonErr.name === 'AbortError') ||
+            currentController.signal.aborted ||
+            !canUseVoiceController()
+          ) {
+            return;
+          }
+          throw createFriendlyError(
+            'پاسخ دریافتی از سرور قابل پردازش نبود. لطفاً دوباره تلاش کنید.',
+            `HTTP ${response.status} · INVALID_RESPONSE`,
+            'INVALID_RESPONSE'
+          );
+        }
+        if (currentController.signal.aborted || !canUseVoiceController()) return;
+
+        if (!data || typeof data !== 'object' || Array.isArray(data)) {
+          throw createFriendlyError(
+            'پاسخ دریافتی از سرور معتبر نیست. لطفاً دوباره تلاش کنید.',
+            `HTTP ${response.status} · INVALID_PAYLOAD`,
+            'INVALID_PAYLOAD'
+          );
+        }
+
+        if (data.status === 'error') {
+          if (data.error_code === 'FLOOR_FORBIDDEN') {
+            handleFloorForbiddenError(data, response.status);
+            return;
+          }
+          throw formatBackendJsonError(response.status, data);
+        }
+
+        if (!data.parsed_command || typeof data.parsed_command !== 'object') {
+          throw createFriendlyError(
+            'اطلاعات فرمان در پاسخ سرور ناقص است. لطفاً دوباره تلاش کنید.',
+            `HTTP ${response.status} · MISSING_COMMAND`,
+            'MISSING_COMMAND'
+          );
+        }
+
+        // بروزرسانی اطلاعات داشبورد
+        transcriptText.textContent = data.transcript || '—';
+        const cmd = data.parsed_command;
+        const floorNum = normalizeFloorValue(cmd.floor) === 2 ? 2 : 1;
+        floorValue.textContent = `طبقه ${toPersianDigits(floorNum)}`;
+        floorValue.className = 'metric-value';
+        serviceValue.textContent = (cmd.domain && cmd.service) ? `${cmd.domain}.${cmd.service}` : '—';
+        entityValue.textContent = cmd.entity_id || '—';
+
+        const haExec = data.ha_execution;
+        if (haExec && haExec.ok) {
+          const statusSuffix = haExec.status_code ? ` (${haExec.status_code})` : '';
+          actionValue.textContent = `اجرا شد${statusSuffix}`;
+          actionValue.className = 'metric-value is-success';
+        } else {
+          const errSuffix = (haExec && haExec.status_code) ? ` (${haExec.status_code})` : '';
+          actionValue.textContent = `خطا در اجرای Home Assistant${errSuffix}`;
+          actionValue.className = 'metric-value is-error';
+        }
+
+        const baseMessage = cmd.success_message || cmd.ack_message || 'فرمان با موفقیت پردازش شد.';
+
+        // اعتبارسنجی آدرس صوت و پشتیبانی از موتور ترکیبی Edge-TTS / Piper
+        const ttsFailed = Boolean(data.tts_status && data.tts_status.ok === false);
+        const rawAudioUrl = typeof data.audio_url === 'string' ? data.audio_url.trim() : '';
+        const safeAudioUrl = validateAudioUrl(rawAudioUrl);
+        const invalidAudioUrl = Boolean(rawAudioUrl && !safeAudioUrl);
+
+        if (!safeAudioUrl || ttsFailed) {
+          const fallbackNotice =
+            (data.tts_status && typeof data.tts_status.fallback_message === 'string' && data.tts_status.fallback_message.trim())
+              ? data.tts_status.fallback_message.trim()
+              : 'پاسخ صوتی در دسترس نیست.';
+          setResponseMessage(`${baseMessage}\n${fallbackNotice}`, 'is-success');
+
+          let metaDetail = 'TTS FALLBACK';
+          if (invalidAudioUrl) {
+            metaDetail = 'TTS FALLBACK · INVALID_AUDIO_URL';
+          } else if (data.tts_status && typeof data.tts_status.error === 'string' && data.tts_status.error.trim()) {
+            metaDetail = `TTS FALLBACK · ${sanitizeRawTextSnippet(data.tts_status.error, 120)}`;
+          }
+          setResponseMeta(metaDetail, 'is-warning');
+          setUIState('warning', 'فرمان اجرا شد (پاسخ صوتی در دسترس نیست)', 'TTS FALLBACK');
+          return;
+        }
+
+        setResponseMessage(baseMessage, 'is-success');
+        const ttsEngine = data.tts_status && data.tts_status.engine ? String(data.tts_status.engine) : '';
+        if (ttsEngine === 'piper-offline' || ttsEngine === 'disk-cache') {
+          setResponseMeta(`TTS: ${ttsEngine} (${data.tts_status.voice || 'piper'})`);
+        } else {
+          setResponseMeta('');
+        }
+        await playAudioSource(safeAudioUrl, baseMessage);
+        if (currentController.signal.aborted || !canUseVoiceController()) return;
+      } catch (err) {
+        if (
+          (err && err.name === 'AbortError') ||
+          currentController.signal.aborted ||
+          !canUseVoiceController()
+        ) {
+          return;
+        }
+        clearStageTimers();
+        console.error(err);
+        setUIState('error', 'خطا در پردازش فرمان', 'ERROR');
+
+        let friendlyMessage;
+        let metaText;
+        if (err && err.isFriendlyError) {
+          friendlyMessage = err.message;
+          metaText = err.metaText || '';
+        } else if (err && err.name === 'TypeError') {
+          setConnectionOnline(false);
+          friendlyMessage = 'ارتباط با سرور برقرار نشد. لطفاً اتصال شبکه و روشن بودن سرور را بررسی کنید.';
+          metaText = `NETWORK_ERROR · ${sanitizeRawTextSnippet(err.message || 'Fetch failed', 120)}`;
+        } else {
+          friendlyMessage = 'خطای غیرمنتظره در پردازش فرمان رخ داد. لطفاً دوباره تلاش کنید.';
+          metaText = `CLIENT_ERROR${err && err.message ? ` · ${sanitizeRawTextSnippet(err.message, 120)}` : ''}`;
+        }
+
+        setResponseMessage(friendlyMessage, 'is-error');
+        setResponseMeta(metaText, 'is-error');
+      } finally {
+        const isCurrentRequest = activeProcessAbortController === currentController;
+        if (isCurrentRequest) {
+          activeProcessAbortController = null;
+        }
+        if (isCurrentRequest || activeProcessAbortController === null) {
+          clearStageTimers();
+          isProcessing = false;
+          if (micBtn) micBtn.disabled = !canUseVoiceController();
+        }
+      }
+    }
+
+    async function handleLoginSubmit(e) {
+      e.preventDefault();
+      if (isAuthenticating) return;
+
+      resetLoginFieldErrors();
+      hideLoginAlert();
+
+      const username = loginUsername ? loginUsername.value.trim() : '';
+      const password = loginPassword ? loginPassword.value : '';
+
+      if (!username || !password) {
+        if (!username) setFieldError(loginUsername, loginUsernameError, 'لطفاً نام کاربری را وارد کنید.');
+        if (!password) setFieldError(loginPassword, loginPasswordError, 'لطفاً رمز عبور را وارد کنید.');
+        (!username ? loginUsername : loginPassword)?.focus();
+        return;
+      }
+
+      setLoginSubmitting(true);
+      try {
+        const response = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+          cache: 'no-store'
+        });
+
+        if (!response.ok) {
+          const errObj = await parseErrorResponse(response);
+          const code = errObj.errorCode || '';
+          if (response.status === 401) {
+            const msg = code === 'TOKEN_EXPIRED'
+              ? 'نشست کاربری شما منقضی شده است. لطفاً دوباره وارد شوید.'
+              : (code === 'UNAUTHORIZED'
+                ? 'احراز هویت نامعتبر است. لطفاً دوباره وارد شوید.'
+                : 'نام کاربری یا رمز عبور اشتباه است.');
+            showLoginAlert(msg, code || 'INVALID_CREDENTIALS');
+            if (loginPassword) {
+              loginPassword.value = '';
+              loginPassword.focus();
+            }
+            return;
+          }
+          if (response.status === 403) {
+            showLoginAlert('حساب کاربری شما مجوز ورود به سیستم را ندارد.', code || 'FORBIDDEN');
+            loginErrorAlert?.focus();
+            return;
+          }
+          if (response.status === 422) {
+            showLoginAlert('فرمت نام کاربری یا رمز عبور معتبر نیست.', code || 'VALIDATION_ERROR');
+            loginUsername?.focus();
+            return;
+          }
+          if (response.status === 429) {
+            showLoginAlert('تعداد تلاش‌های ورود بیش از حد مجاز است. لطفاً کمی بعد دوباره تلاش کنید.', code || 'RATE_LIMITED');
+            loginErrorAlert?.focus();
+            return;
+          }
+          showLoginAlert('خطای سرور هنگام ورود رخ داد. لطفاً وضعیت سرویس را بررسی کنید.', code || `HTTP_${response.status}`);
+          loginErrorAlert?.focus();
+          return;
+        }
+
+        const data = await response.json();
+        const session = buildSessionObject(data, '', username);
+        if (!session) {
+          showLoginAlert('پاسخ ورود از سرور معتبر نبود. لطفاً با مدیر سیستم تماس بگیرید.', 'INVALID_LOGIN_RESPONSE');
+          loginErrorAlert?.focus();
+          return;
+        }
+
+        if (loginPassword) loginPassword.value = '';
+        resetPasswordVisibility();
+        saveAuthSession(session);
+        setConnectionOnline(true);
+        applyAuthenticatedView(session, { focusMic: true });
+      } catch (err) {
+        if (err && err.name === 'TypeError') {
+          setConnectionOnline(false);
+          showLoginAlert('ارتباط با سرور برقرار نشد. لطفاً شبکه محلی و روشن بودن سرور را بررسی کنید.', 'NETWORK_ERROR');
+        } else {
+          showLoginAlert('خطای غیرمنتظره هنگام ورود رخ داد. لطفاً دوباره تلاش کنید.', 'LOGIN_ERROR');
+        }
+        loginErrorAlert?.focus();
+      } finally {
+        setLoginSubmitting(false);
+      }
+    }
+
+    function getModalFocusableElements() {
+      if (!loginModal) return [];
+      return Array.from(
+        loginModal.querySelectorAll('input:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])')
+      ).filter(el => !el.hidden && el.offsetParent !== null);
+    }
+
+    if (loginModal) {
+      loginModal.addEventListener('keydown', (e) => {
+        if (isAuthModalOpen() && e.key === 'Escape') {
+          e.preventDefault();
+          return;
+        }
+        if (e.key !== 'Tab' || !isAuthModalOpen()) return;
+        const focusables = getModalFocusableElements();
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement;
+        if (e.shiftKey && (active === first || active === loginErrorAlert || !loginModal.contains(active))) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && (active === last || !loginModal.contains(active))) {
+          e.preventDefault();
+          first.focus();
+        }
+      });
+    }
+
+    if (togglePasswordBtn && loginPassword) {
+      togglePasswordBtn.addEventListener('click', () => {
+        if (isAuthenticating) return;
+        const isHidden = loginPassword.type === 'password';
+        loginPassword.type = isHidden ? 'text' : 'password';
+        togglePasswordBtn.setAttribute('aria-pressed', isHidden ? 'true' : 'false');
+        togglePasswordBtn.setAttribute('aria-label', isHidden ? 'مخفی کردن رمز عبور' : 'نمایش رمز عبور');
+        const eyeOpen = togglePasswordBtn.querySelector('.icon-eye-open');
+        const eyeClosed = togglePasswordBtn.querySelector('.icon-eye-closed');
+        if (eyeOpen) eyeOpen.hidden = isHidden;
+        if (eyeClosed) eyeClosed.hidden = !isHidden;
+        loginPassword.focus();
+      });
+    }
+
+    if (loginUsername) {
+      loginUsername.addEventListener('input', () => clearFieldError(loginUsername, loginUsernameError));
+    }
+    if (loginPassword) {
+      loginPassword.addEventListener('input', () => clearFieldError(loginPassword, loginPasswordError));
+    }
+    if (loginForm) {
+      loginForm.addEventListener('submit', handleLoginSubmit);
+    }
+    if (logoutBtn) {
+      logoutBtn.addEventListener('click', handleLogout);
+    }
+
+    // -----------------------------------------------------------------------
+    // Forgot Password (3-Step Email OTP) Handlers
+    // -----------------------------------------------------------------------
+    if (openForgotBtn) {
+      openForgotBtn.addEventListener('click', () => {
+        hideLoginAlert();
+        resetLoginFieldErrors();
+        setForgotMode(true, 1);
+        requestAnimationFrame(() => forgotEmailInput?.focus());
+      });
+    }
+
+    if (backToLoginBtn) {
+      backToLoginBtn.addEventListener('click', () => {
+        hideLoginAlert();
+        setForgotMode(false);
+        requestAnimationFrame(() => loginUsername?.focus());
+      });
+    }
+
+    if (forgotEmailForm) {
+      forgotEmailForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        hideLoginAlert();
+        const email = forgotEmailInput ? forgotEmailInput.value.trim() : '';
+        if (!email) {
+          showLoginAlert('لطفاً ایمیل حساب کاربری خود را وارد کنید.', 'VALIDATION_ERROR');
+          forgotEmailInput?.focus();
+          return;
+        }
+        try {
+          const resp = await fetch('/api/auth/forgot-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+            cache: 'no-store'
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            showLoginAlert(data.detail || 'خطا در ارسال کد تایید.', data.error_code || `HTTP_${resp.status}`);
+            return;
+          }
+          forgotFlowEmail = email;
+          setForgotMode(true, 2);
+          showLoginAlert(data.message || 'کد تایید ۶ رقمی ارسال شد.', data.delivery === 'terminal' ? 'TERMINAL_OTP' : 'OTP_SENT', 'success');
+          requestAnimationFrame(() => forgotOtpInput?.focus());
+        } catch (_) {
+          showLoginAlert('خطا در برقراری ارتباط با سرور.', 'NETWORK_ERROR');
+        }
+      });
+    }
+
+    if (forgotOtpForm) {
+      forgotOtpForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        hideLoginAlert();
+        const otp = forgotOtpInput ? forgotOtpInput.value.trim() : '';
+        if (!/^\d{6}$/.test(otp)) {
+          showLoginAlert('کد تایید باید دقیقاً ۶ رقم باشد.', 'INVALID_OTP_FORMAT');
+          forgotOtpInput?.focus();
+          return;
+        }
+        try {
+          const resp = await fetch('/api/auth/verify-otp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: forgotFlowEmail, otp }),
+            cache: 'no-store'
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            showLoginAlert(data.detail || 'کد تایید نامعتبر است.', data.error_code || `HTTP_${resp.status}`);
+            return;
+          }
+          forgotFlowOtp = otp;
+          setForgotMode(true, 3);
+          showLoginAlert(data.message || 'کد تایید معتبر است. رمز عبور جدید را وارد کنید.', 'OTP_VERIFIED', 'success');
+          requestAnimationFrame(() => forgotNewPasswordInput?.focus());
+        } catch (_) {
+          showLoginAlert('خطا در برقراری ارتباط با سرور.', 'NETWORK_ERROR');
+        }
+      });
+    }
+
+    if (forgotResetForm) {
+      forgotResetForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        hideLoginAlert();
+        const newPassword = forgotNewPasswordInput ? forgotNewPasswordInput.value : '';
+        const confirmPassword = forgotConfirmPasswordInput ? forgotConfirmPasswordInput.value : '';
+        if (newPassword.length < 6) {
+          showLoginAlert('رمز عبور جدید باید حداقل ۶ کاراکتر باشد.', 'WEAK_PASSWORD');
+          forgotNewPasswordInput?.focus();
+          return;
+        }
+        if (newPassword !== confirmPassword) {
+          showLoginAlert('رمز عبور جدید و تکرار آن مطابقت ندارند.', 'PASSWORD_MISMATCH');
+          forgotConfirmPasswordInput?.focus();
+          return;
+        }
+        try {
+          const resp = await fetch('/api/auth/reset-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: forgotFlowEmail, otp: forgotFlowOtp, new_password: newPassword }),
+            cache: 'no-store'
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            showLoginAlert(data.detail || 'تغییر رمز عبور ناموفق بود.', data.error_code || `HTTP_${resp.status}`);
+            return;
+          }
+          const resetUsername = data.username || '';
+          setForgotMode(false);
+          if (loginUsername && resetUsername) loginUsername.value = resetUsername;
+          showLoginAlert(data.message || 'رمز عبور با موفقیت تغییر یافت.', 'PASSWORD_UPDATED', 'success');
+          requestAnimationFrame(() => loginPassword?.focus());
+        } catch (_) {
+          showLoginAlert('خطا در برقراری ارتباط با سرور.', 'NETWORK_ERROR');
+        }
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // Admin Control & Telemetry Dashboard
+    // -----------------------------------------------------------------------
+    function showAdminUserFeedback(text, isError = false) {
+      if (!adminUserFeedback) return;
+      adminUserFeedback.textContent = text;
+      adminUserFeedback.className = isError ? 'admin-feedback is-error' : 'admin-feedback';
+      adminUserFeedback.hidden = false;
+    }
+
+    function renderTopology(nodes) {
+      if (!topologyFlow) return;
+      topologyFlow.replaceChildren();
+      if (!Array.isArray(nodes) || nodes.length === 0) return;
+
+      nodes.forEach((node, idx) => {
+        const card = document.createElement('div');
+        card.className = `topo-node ${node.online ? 'is-online' : 'is-offline'}`;
+
+        const head = document.createElement('div');
+        head.className = 'topo-node-head';
+
+        const pill = document.createElement('span');
+        pill.className = 'topo-status-pill';
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        const pillText = document.createElement('span');
+        pillText.textContent = node.online ? 'Online' : 'Offline';
+        pill.append(dot, pillText);
+        head.appendChild(pill);
+
+        const title = document.createElement('div');
+        title.className = 'topo-title';
+        title.textContent = node.label || node.id || '';
+
+        const sub = document.createElement('div');
+        sub.className = 'topo-sub';
+        sub.textContent = node.detail || node.subtitle || '';
+
+        card.append(head, title, sub);
+        topologyFlow.appendChild(card);
+
+        if (idx < nodes.length - 1) {
+          const arrow = document.createElement('div');
+          arrow.className = 'topo-connector';
+          arrow.setAttribute('aria-hidden', 'true');
+          arrow.textContent = '⇄';
+          topologyFlow.appendChild(arrow);
+        }
+      });
+    }
+
+    function renderHardwareTelemetry(hw) {
+      if (!hw) return;
+      const cpuPct = hw.cpu && typeof hw.cpu.percent === 'number' ? hw.cpu.percent : null;
+      if (hwCpuPct) hwCpuPct.textContent = cpuPct !== null ? `${cpuPct}%` : 'N/A';
+      if (hwCpuBar) hwCpuBar.style.width = cpuPct !== null ? `${Math.min(100, Math.max(0, cpuPct))}%` : '0%';
+      if (hwCpuSub) hwCpuSub.textContent = hw.cpu && hw.cpu.cores ? `Cores: ${hw.cpu.cores}` : 'psutil unavailable';
+
+      const ramPct = hw.ram && typeof hw.ram.percent === 'number' ? hw.ram.percent : null;
+      if (hwRamPct) hwRamPct.textContent = ramPct !== null ? `${ramPct}%` : 'N/A';
+      if (hwRamBar) hwRamBar.style.width = ramPct !== null ? `${Math.min(100, Math.max(0, ramPct))}%` : '0%';
+      if (hwRamSub) {
+        hwRamSub.textContent = (hw.ram && hw.ram.used_gb !== null && hw.ram.total_gb !== null)
+          ? `${hw.ram.used_gb} / ${hw.ram.total_gb} GB`
+          : '—';
+      }
+
+      const gpu = hw.gpu || {};
+      const gpuPct = gpu.available && typeof gpu.util_percent === 'number' ? gpu.util_percent : null;
+      if (hwGpuPct) hwGpuPct.textContent = gpuPct !== null ? `${gpuPct}%` : 'N/A';
+      if (hwGpuBar) hwGpuBar.style.width = gpuPct !== null ? `${Math.min(100, Math.max(0, gpuPct))}%` : '0%';
+      if (hwGpuSub) {
+        if (gpu.available) {
+          const vram = gpu.memory_used_mb !== null && gpu.memory_total_mb !== null
+            ? `${gpu.memory_used_mb}/${gpu.memory_total_mb} MB`
+            : '';
+          const temp = gpu.temperature_c !== null ? ` · ${gpu.temperature_c}°C` : '';
+          hwGpuSub.textContent = `${gpu.name || 'NVIDIA GPU'} (${vram}${temp})`;
+        } else {
+          hwGpuSub.textContent = 'No NVIDIA GPU detected';
+        }
+      }
+    }
+
+    async function fetchAdminTelemetry() {
+      if (!authState.token || authState.role !== 'admin') return;
+      try {
+        const resp = await fetch('/api/admin/system-stats', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${authState.token}` },
+          cache: 'no-store'
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        renderTopology(data.topology);
+        renderHardwareTelemetry(data.hardware);
+        if (telemetryTimestamp && data.timestamp) {
+          const dt = new Date(data.timestamp * 1000);
+          telemetryTimestamp.textContent = dt.toLocaleTimeString('en-GB');
+        }
+      } catch (_) {}
+    }
+
+    function renderAdminUsers(users) {
+      if (!adminUserList) return;
+      adminUserList.replaceChildren();
+      if (!Array.isArray(users) || users.length === 0) return;
+
+      users.forEach((user) => {
+        const row = document.createElement('div');
+        row.className = 'user-row';
+
+        const main = document.createElement('div');
+        main.className = 'user-row-main';
+
+        const meta = document.createElement('div');
+        meta.className = 'user-row-meta';
+
+        const uname = document.createElement('strong');
+        uname.style.fontSize = '0.88rem';
+        uname.setAttribute('dir', 'ltr');
+        uname.textContent = user.username;
+
+        const badgeInfo = formatFloorBadge(user.floor);
+        const fBadge = document.createElement('span');
+        fBadge.className = badgeInfo.isAdmin ? 'floor-badge is-admin' : 'floor-badge';
+        fBadge.textContent = badgeInfo.text;
+
+        const emailTag = document.createElement('span');
+        emailTag.className = 'user-email-tag';
+        emailTag.textContent = user.email || '—';
+
+        meta.append(uname, fBadge, emailTag);
+
+        const actions = document.createElement('div');
+        actions.className = 'user-row-actions';
+
+        const resetBtn = document.createElement('button');
+        resetBtn.type = 'button';
+        resetBtn.className = 'mini-btn';
+        resetBtn.textContent = 'تغییر رمز';
+
+        const emailBtn = document.createElement('button');
+        emailBtn.type = 'button';
+        emailBtn.className = 'mini-btn';
+        emailBtn.textContent = 'ویرایش ایمیل';
+
+        actions.append(resetBtn, emailBtn);
+        main.append(meta, actions);
+        row.appendChild(main);
+
+        const inlineForm = document.createElement('form');
+        inlineForm.className = 'user-inline-form';
+        inlineForm.hidden = true;
+
+        const inputEl = document.createElement('input');
+        inputEl.className = 'user-inline-input';
+        inputEl.dir = 'ltr';
+
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'submit';
+        saveBtn.className = 'mini-btn';
+        saveBtn.textContent = 'ذخیره';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'mini-btn';
+        cancelBtn.textContent = 'انصراف';
+
+        inlineForm.append(inputEl, saveBtn, cancelBtn);
+        row.appendChild(inlineForm);
+
+        let editMode = '';
+        resetBtn.addEventListener('click', () => {
+          editMode = 'password';
+          inputEl.type = 'password';
+          inputEl.value = '';
+          inputEl.placeholder = 'New password (min 6 chars)';
+          inlineForm.hidden = false;
+          inputEl.focus();
+        });
+
+        emailBtn.addEventListener('click', () => {
+          editMode = 'email';
+          inputEl.type = 'email';
+          inputEl.value = user.email || '';
+          inputEl.placeholder = 'user@example.com';
+          inlineForm.hidden = false;
+          inputEl.focus();
+        });
+
+        cancelBtn.addEventListener('click', () => {
+          inlineForm.hidden = true;
+          editMode = '';
+        });
+
+        inlineForm.addEventListener('submit', async (ev) => {
+          ev.preventDefault();
+          const val = inputEl.value.trim();
+          if (!val) return;
+          try {
+            const endpoint = editMode === 'email'
+              ? `/api/admin/users/${encodeURIComponent(user.username)}/email`
+              : `/api/admin/users/${encodeURIComponent(user.username)}/reset-password`;
+            const bodyPayload = editMode === 'email'
+              ? { email: val }
+              : { new_password: inputEl.value };
+
+            const resp = await fetch(endpoint, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${authState.token}`
+              },
+              body: JSON.stringify(bodyPayload),
+              cache: 'no-store'
+            });
+            const resData = await resp.json();
+            if (!resp.ok) {
+              showAdminUserFeedback(resData.detail || 'عملیات ناموفق بود.', true);
+              return;
+            }
+            inlineForm.hidden = true;
+            showAdminUserFeedback(resData.message || 'تغییرات با موفقیت ذخیره شد.', false);
+            await fetchAdminUsers();
+          } catch (_) {
+            showAdminUserFeedback('خطا در ارتباط با سرور.', true);
+          }
+        });
+
+        adminUserList.appendChild(row);
+      });
+    }
+
+    async function fetchAdminUsers() {
+      if (!authState.token || authState.role !== 'admin') return;
+      try {
+        const resp = await fetch('/api/admin/users', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${authState.token}` },
+          cache: 'no-store'
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        renderAdminUsers(data.users || []);
+      } catch (_) {}
+    }
+
+    function startAdminDashboard() {
+      if (!adminPanel) return;
+      adminPanel.hidden = false;
+      void fetchAdminTelemetry();
+      void fetchAdminUsers();
+      if (adminPollTimer) clearInterval(adminPollTimer);
+      adminPollTimer = setInterval(() => {
+        if (authState.role === 'admin' && isAuthenticated() && !isAuthModalOpen()) {
+          void fetchAdminTelemetry();
+        }
+      }, 5000);
+    }
+
+    function stopAdminDashboard() {
+      if (adminPollTimer) {
+        clearInterval(adminPollTimer);
+        adminPollTimer = null;
+      }
+      if (adminPanel) adminPanel.hidden = true;
+      if (adminUserFeedback) adminUserFeedback.hidden = true;
+    }
+
+    if (adminRefreshBtn) {
+      adminRefreshBtn.addEventListener('click', () => {
+        void fetchAdminTelemetry();
+        void fetchAdminUsers();
+      });
+    }
+
+    if (replayBtn) {
+      replayBtn.addEventListener('click', async () => {
+        if (!canUseVoiceController() || !lastAudioUrl || isProcessing) return;
+        stopActiveAudio(true);
+        const currentMessage = responseMessage ? responseMessage.textContent.split('\n')[0] : 'پاسخ صوتی';
+        setResponseMessage(currentMessage, 'is-success');
+        setResponseMeta('');
+        await playAudioSource(lastAudioUrl, currentMessage);
+      });
+    }
+
+    // پشتیبانی همزمان از رویدادهای لمسی موبایل، ماوس و کیبورد دسکتاپ
+    micBtn.addEventListener('mousedown', startRecording);
+    window.addEventListener('mouseup', stopRecording);
+
+    micBtn.addEventListener('touchstart', startRecording, { passive: false });
+    window.addEventListener('touchend', stopRecording, { passive: false });
+    window.addEventListener('touchcancel', stopRecording, { passive: false });
+
+    micBtn.addEventListener('keydown', (e) => {
+      if (isEditableOrModalTarget(e.target) || !canUseVoiceController()) return;
+      if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault();
+        if (e.repeat) return;
+        startRecording(e);
+      }
+    });
+    micBtn.addEventListener('keyup', (e) => {
+      if (isEditableOrModalTarget(e.target) || !canUseVoiceController()) return;
+      if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault();
+        stopRecording(e);
+      }
+    });
+
+    micBtn.addEventListener('blur', () => {
+      if (isPressActive || isStartingRecording || isRecording) {
+        stopRecording();
+      }
+    });
+    window.addEventListener('blur', () => {
+      if (isPressActive || isStartingRecording || isRecording) {
+        stopRecording();
+      }
+    });
+
+    micBtn.addEventListener('contextmenu', e => e.preventDefault());
+    window.addEventListener('pagehide', () => revokeCurrentAudioObjectUrl());
+
+    async function verifyStoredSession(restored) {
+      isVerifyingSession = true;
+      try {
+        const response = await fetch('/api/me', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${restored.token}` },
+          cache: 'no-store'
+        });
+
+        if (response.status === 401) {
+          const errObj = await parseErrorResponse(response);
+          const code = errObj.errorCode || 'TOKEN_EXPIRED';
+          const msg = code === 'TOKEN_EXPIRED'
+            ? 'نشست کاربری شما منقضی شده است. لطفاً دوباره وارد شوید.'
+            : 'احراز هویت شما معتبر نیست یا پایان یافته است. لطفاً دوباره وارد شوید.';
+          clearAuthSession();
+          isVerifyingSession = false;
+          openLoginModal({ alertText: msg, alertCode: code, clearUsername: false });
+          return;
+        }
+
+        if (!response.ok) {
+          const errObj = await parseErrorResponse(response);
+          clearAuthSession();
+          isVerifyingSession = false;
+          openLoginModal({
+            alertText: 'بررسی اعتبار نشست امکان‌پذیر نبود. لطفاً دوباره وارد شوید.',
+            alertCode: errObj.errorCode || `HTTP_${response.status}`,
+            clearUsername: false
+          });
+          return;
+        }
+
+        const data = await response.json();
+        const verified = buildSessionObject(data, restored.token, restored.username);
+        if (!verified || data.authenticated === false) {
+          clearAuthSession();
+          isVerifyingSession = false;
+          openLoginModal({
+            alertText: 'پاسخ بررسی نشست معتبر نبود. لطفاً دوباره وارد شوید.',
+            alertCode: 'UNAUTHORIZED',
+            clearUsername: false
+          });
+          return;
+        }
+
+        saveAuthSession(verified);
+        setConnectionOnline(true);
+        isVerifyingSession = false;
+        applyAuthenticatedView(verified, { focusMic: false });
+      } catch (err) {
+        clearAuthSession();
+        isVerifyingSession = false;
+        if (err && err.name === 'TypeError') {
+          setConnectionOnline(false);
+          openLoginModal({
+            alertText: 'ارتباط با سرور برقرار نشد. لطفاً شبکه محلی و روشن بودن سرور را بررسی کرده و دوباره وارد شوید.',
+            alertCode: 'NETWORK_ERROR',
+            clearUsername: false
+          });
+        } else {
+          openLoginModal({
+            alertText: 'خطا در بررسی نشست کاربری. لطفاً دوباره وارد شوید.',
+            alertCode: 'SESSION_CHECK_ERROR',
+            clearUsername: false
+          });
+        }
+      }
+    }
+
+    (function initAuthSession() {
+      const restored = loadAuthSession();
+      if (!restored) {
+        clearAuthSession();
+        openLoginModal({ clearUsername: false });
+        return;
+      }
+      // Keep #appShell locked (inert + aria-hidden) and #loginModal hidden until GET /api/me verifies token
+      document.body.setAttribute('data-auth', 'unauthenticated');
+      if (appShell) {
+        appShell.inert = true;
+        appShell.setAttribute('aria-hidden', 'true');
+      }
+      if (userSessionBar) userSessionBar.hidden = true;
+      if (loginModal) loginModal.hidden = true;
+      if (micBtn) micBtn.disabled = true;
+      void verifyStoredSession(restored);
+    })();
+  </script>
+</body>
+</html>

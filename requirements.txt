@@ -3,6 +3,9 @@ uvicorn[standard]==0.30.6
 faster-whisper==1.0.3
 ollama==0.3.3
 edge-tts==6.1.12
+piper-tts>=1.2.0
+psutil>=5.9.0
+python-dotenv>=1.0.0
 python-multipart==0.0.9
 requests==2.32.3
 pydantic==2.9.2

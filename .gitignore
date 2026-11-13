@@ -34,11 +34,22 @@ ENV/
 env.bak/
 venv.bak/
 
-# Audio runtime artifacts
+# Audio runtime artifacts & local TTS models
 temp_audio/
+tts_cache/
+piper_models/
 *.mp3
 *.webm
 *.wav
+
+# Storage & local credentials
+storage/users.json
+storage/cache/
+storage/models/*.onnx
+!storage/models/*.onnx.json
+
+# Local agent customizations (migrated to global ~/.agents/)
+.agents/
 
 # Unit test & coverage artifacts
 .tox/
