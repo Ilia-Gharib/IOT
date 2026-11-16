@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # scripts/start_cloudflare_tunnel.ps1
 # Cloudflare Tunnel Manager with Persistent HTTP/2 Protocol
 # Automatically provisions high-speed HTTPS public access for http://127.0.0.1:8000
@@ -7,6 +7,7 @@
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
+$ProgressPreference = 'SilentlyContinue'
 
 $scriptDir = $PSScriptRoot
 if (-not $scriptDir) {
@@ -174,7 +175,9 @@ while ($sw.Elapsed.TotalSeconds -lt $timeoutSeconds) {
 }
 
 if ($activeUrl) {
+    # 1. Save to local tunnel_url.txt
     $activeUrl | Out-File -FilePath $urlFile -Encoding utf8 -NoNewline
+
     Write-Host "`n==========================================================" -ForegroundColor Green
     Write-Host " [✓] CLOUDFLARE TUNNEL IS OPERATIONAL!                    " -ForegroundColor Green
     Write-Host "==========================================================" -ForegroundColor Green
@@ -185,6 +188,38 @@ if ($activeUrl) {
     Write-Host " Log File   : $logFile" -ForegroundColor Gray
     Write-Host " Saved to   : $urlFile" -ForegroundColor Yellow
     Write-Host "==========================================================`n" -ForegroundColor Green
+
+    # 2. Verify /health
+    $healthUrl = "$activeUrl/health"
+    Write-Host "[*] Verifying public tunnel health at $healthUrl..." -ForegroundColor Cyan
+    $healthy = $false
+    $httpCode = "000"
+    for ($attempt = 1; $attempt -le 10; $attempt++) {
+        $httpCode = (& curl.exe -s -o NUL -w "%{http_code}" "$healthUrl" --max-time 4 2>&1).Trim()
+        if ($httpCode -eq "200") {
+            $healthy = $true
+            Write-Host "[✓] Public tunnel verified healthy (HTTP 200) on attempt $attempt!" -ForegroundColor Green
+            break
+        }
+        Start-Sleep -Seconds 2
+    }
+    if (-not $healthy) {
+        Write-Host "[!] Note: Public health check returned HTTP $httpCode (backend server may still be initializing)." -ForegroundColor Yellow
+    }
+
+    # 3. Automatic Discovery Sync to Host
+    $discoveryUrl = [System.Environment]::GetEnvironmentVariable("AVA_DISCOVERY_URL")
+    $discoveryKey = [System.Environment]::GetEnvironmentVariable("AVA_DISCOVERY_KEY")
+    if ($discoveryUrl -and $discoveryKey) {
+        Write-Host "[*] Syncing tunnel URL to Discovery Gateway ($discoveryUrl)..." -ForegroundColor Cyan
+        $payload = (@{ url = $activeUrl } | ConvertTo-Json -Compress).Replace('"', '\"')
+        $syncResult = (& curl.exe -s -X POST "$discoveryUrl" -H "Content-Type: application/json" -H "X-AVA-Key: $discoveryKey" -d "$payload" --max-time 8 2>&1).Trim()
+        if ($syncResult -match '"status"\s*:\s*"success"') {
+            Write-Host "[✓] Successfully synced to Discovery Gateway! Response: $syncResult" -ForegroundColor Green
+        } else {
+            Write-Host "[!] Discovery Gateway response: $syncResult" -ForegroundColor Yellow
+        }
+    }
 } else {
     Write-Error "Could not retrieve tunnel URL. Check $logFile."
     exit 1
