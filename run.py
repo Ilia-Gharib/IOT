@@ -101,6 +101,8 @@ class CloudflareTunnelSupervisor:
         self.target_host = target_host
         self.target_url = f"http://{target_host}:{port}"
         self.token = os.getenv("CLOUDFLARE_TUNNEL_TOKEN", "").strip()
+        self.discovery_url = os.getenv("AVA_DISCOVERY_URL", "").strip()
+        self.discovery_key = os.getenv("AVA_DISCOVERY_KEY", "").strip()
         self.url_file = BASE_DIR / "scripts" / "tunnel_url.txt"
         self.log_file = BASE_DIR / "scripts" / "cloudflared.log"
         self._stop_event = threading.Event()
@@ -263,6 +265,63 @@ class CloudflareTunnelSupervisor:
 """
         print(banner, flush=True)
 
+    def _verify_public_health(self, url: str, max_attempts: int = 15, delay: float = 2.0) -> bool:
+        """Verifies public health endpoint of the active Cloudflare tunnel."""
+        health_url = f"{url}/health"
+        print(f"[TUNNEL] Verifying public tunnel health ({health_url})...", flush=True)
+        for attempt in range(1, max_attempts + 1):
+            if self._stop_event.is_set():
+                return False
+            try:
+                req = urllib.request.Request(
+                    health_url,
+                    headers={"User-Agent": "CloudflareHealthCheck/1.0"},
+                )
+                with urllib.request.urlopen(req, timeout=5.0) as resp:
+                    if resp.status == 200:
+                        print(f"[TUNNEL] [✓] Public tunnel verified healthy (HTTP 200) on attempt {attempt}.", flush=True)
+                        return True
+            except Exception:
+                pass
+            time.sleep(delay)
+        print(f"[TUNNEL] [!] Public tunnel health check timed out at {health_url}.", flush=True)
+        return False
+
+    def _sync_to_discovery(self, url: str) -> bool:
+        """Sends POST request with X-AVA-Key to AVA_DISCOVERY_URL to register latest tunnel URL."""
+        disc_url = os.getenv("AVA_DISCOVERY_URL", "").strip() or self.discovery_url
+        disc_key = os.getenv("AVA_DISCOVERY_KEY", "").strip() or self.discovery_key
+
+        if not disc_url or not disc_key:
+            print("[TUNNEL] Notice: AVA_DISCOVERY_URL or AVA_DISCOVERY_KEY not set. Skipping discovery sync.", flush=True)
+            return False
+
+        print(f"[TUNNEL] Syncing active tunnel URL ({url}) to Discovery Gateway ({disc_url})...", flush=True)
+        for attempt in range(1, 4):
+            try:
+                payload = json.dumps({"url": url}).encode("utf-8")
+                req = urllib.request.Request(
+                    disc_url,
+                    data=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-AVA-Key": disc_key,
+                        "User-Agent": "AvaDiscoveryClient/1.0",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=10.0) as resp:
+                    resp_data = resp.read().decode("utf-8")
+                    if resp.status == 200:
+                        print(f"[TUNNEL] [✓] Successfully registered tunnel on Discovery Gateway! Response: {resp_data.strip()}", flush=True)
+                        return True
+                    else:
+                        print(f"[TUNNEL] [!] Discovery Gateway returned HTTP {resp.status}: {resp_data.strip()}", flush=True)
+            except Exception as exc:
+                print(f"[TUNNEL] [!] Attempt {attempt}/3 - Discovery Gateway sync error: {exc}", flush=True)
+                time.sleep(2.0)
+        return False
+
     def _run_loop(self) -> None:
         cf_bin = self._find_cloudflared()
         self.url_file.parent.mkdir(parents=True, exist_ok=True)
@@ -280,7 +339,7 @@ class CloudflareTunnelSupervisor:
             token = os.getenv("CLOUDFLARE_TUNNEL_TOKEN", "").strip()
             hostname = None
 
-            if token and len(token) > 10:
+            if token and len(token) > 10 and not token.startswith("#"):
                 cmd = [
                     cf_bin,
                     "tunnel",
@@ -296,41 +355,17 @@ class CloudflareTunnelSupervisor:
                     self.target_url,
                 ]
             else:
-                # 2. Resilient quick tunnel provisioning to bypass VPN/proxy 429 rate limits
-                hostname, res_token = self._obtain_resilient_tunnel()
-                if hostname and res_token:
-                    self.current_url = f"https://{hostname}"
-                    try:
-                        self.url_file.write_text(self.current_url, encoding="utf-8")
-                    except Exception:
-                        pass
-                    self._print_banner(self.current_url)
-                    cmd = [
-                        cf_bin,
-                        "tunnel",
-                        "--no-autoupdate",
-                        "--edge-ip-version",
-                        "4",
-                        "run",
-                        "--token",
-                        res_token,
-                        "--url",
-                        self.target_url,
-                        "--protocol",
-                        "http2",
-                    ]
-                else:
-                    cmd = [
-                        cf_bin,
-                        "tunnel",
-                        "--no-autoupdate",
-                        "--edge-ip-version",
-                        "4",
-                        "--protocol",
-                        "http2",
-                        "--url",
-                        self.target_url,
-                    ]
+                cmd = [
+                    cf_bin,
+                    "tunnel",
+                    "--no-autoupdate",
+                    "--edge-ip-version",
+                    "4",
+                    "--protocol",
+                    "http2",
+                    "--url",
+                    self.target_url,
+                ]
 
             try:
                 print(f"[TUNNEL] Launching Cloudflare Tunnel process ({cf_bin}) -> {self.target_url}...", flush=True)
@@ -342,7 +377,7 @@ class CloudflareTunnelSupervisor:
                     bufsize=1,
                 )
 
-                found_url = bool(hostname or token)
+                found_url = bool(hostname or (token and not token.startswith("#")))
                 recent_lines: list[str] = []
                 assert self._process.stdout is not None
                 for raw_line in iter(self._process.stdout.readline, ""):
@@ -364,6 +399,18 @@ class CloudflareTunnelSupervisor:
                         except Exception:
                             pass
                         self._print_banner(self.current_url)
+
+                        # Verify health and register on Discovery Gateway asynchronously
+                        def _verify_and_sync(tunnel_url: str) -> None:
+                            self._verify_public_health(tunnel_url)
+                            self._sync_to_discovery(tunnel_url)
+
+                        threading.Thread(
+                            target=_verify_and_sync,
+                            args=(self.current_url,),
+                            name="DiscoverySyncWorker",
+                            daemon=True,
+                        ).start()
 
                     # Print critical registration, connection or error lines
                     line_lower = line.lower()
