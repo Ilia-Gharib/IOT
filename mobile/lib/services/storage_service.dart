@@ -14,7 +14,7 @@ class StorageService {
 
   static const String defaultLocalUrl = 'http://192.168.137.1:8000';
   static const String defaultRemoteUrl = 'https://fossil-walker-leaf-authentic.trycloudflare.com';
-  static const String defaultDiscoveryUrl = 'https://rhomeoffice.ir/ava-gateway.php';
+  static const String defaultDiscoveryUrl = 'https://expo.loxssaz.ir/ava-gateway.php';
 
   static Future<String> getLocalUrl() async {
     final prefs = await SharedPreferences.getInstance();
