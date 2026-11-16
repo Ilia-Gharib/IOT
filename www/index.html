@@ -6,7 +6,6 @@
   <meta name="theme-color" content="#090d16" />
   <link rel="icon" href="data:," />
   <title>کنترل صوتی ساختمان هوشمند</title>
-  <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
   <style>
     :root {
       color-scheme: dark;
@@ -1754,6 +1753,51 @@
     let activeAudioObjectUrl = null;
     let audioFetchSeq = 0;
 
+    // Audio Playback Queue (Two-Phase Sequential Execution)
+    const audioQueue = [];
+    let isPlayingQueue = false;
+    let pendingEventPollingInterval = null;
+    let isPollingPendingEvent = false;
+
+    function enqueueAudio(rawAudioUrl, displayMessage, options = {}) {
+      const safeAudioUrl = validateAudioUrl(rawAudioUrl);
+      if (!safeAudioUrl) return;
+      audioQueue.push({
+        url: safeAudioUrl,
+        message: displayMessage || '',
+        options: options || {}
+      });
+      void processAudioQueue();
+    }
+
+    function clearAudioQueue() {
+      audioQueue.length = 0;
+      stopActiveAudio(true);
+      isPlayingQueue = false;
+      if (canUseVoiceController() && document.body.getAttribute('data-state') === 'playing') {
+        setUIState('idle', 'آماده دریافت فرمان بعدی', 'IDLE');
+      }
+    }
+
+    async function processAudioQueue() {
+      if (isPlayingQueue || audioQueue.length === 0) return;
+      isPlayingQueue = true;
+
+      while (audioQueue.length > 0) {
+        const item = audioQueue.shift();
+        try {
+          await playAudioSource(item.url, item.message, item.options);
+        } catch (err) {
+          console.warn('Audio queue playback error:', err);
+        }
+      }
+
+      isPlayingQueue = false;
+      if (canUseVoiceController() && document.body.getAttribute('data-state') === 'playing') {
+        setUIState('idle', 'آماده دریافت فرمان بعدی', 'IDLE');
+      }
+    }
+
     function toPersianDigits(value) {
       return String(value).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]);
     }
@@ -2152,6 +2196,60 @@
       });
     }
 
+    function startPendingEventPolling() {
+      if (pendingEventPollingInterval) return;
+      pendingEventPollingInterval = setInterval(async () => {
+        if (!authState.token || isRecording || isProcessing || isStartingRecording || isPressActive) {
+          return;
+        }
+        if (isPollingPendingEvent) return;
+        isPollingPendingEvent = true;
+
+        try {
+          const resp = await fetch('/api/pending-event', {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${authState.token}`
+            },
+            cache: 'no-store'
+          });
+          if (resp.status === 401) {
+            handleSessionExpired('TOKEN_EXPIRED');
+            return;
+          }
+          if (!resp.ok) return;
+          const data = await resp.json();
+          if (data && data.has_event && data.audio_url) {
+            const msg = data.message || 'گزارش اجرای فرمان';
+            setResponseMessage(msg, data.status === 'error' ? 'is-warning' : 'is-success');
+            if (actionValue) {
+              if (data.status === 'success') {
+                actionValue.textContent = 'اجرا شد';
+                actionValue.className = 'metric-value is-success';
+              } else {
+                actionValue.textContent = 'خطا در اجرا';
+                actionValue.className = 'metric-value is-error';
+              }
+            }
+            setUIState(data.status === 'error' ? 'warning' : 'idle', msg, 'HA EVENT');
+            enqueueAudio(data.audio_url, msg, { preserveErrorState: data.status === 'error' });
+          }
+        } catch (_) {
+          // Silent catch for background idle polling
+        } finally {
+          isPollingPendingEvent = false;
+        }
+      }, 2000);
+    }
+
+    function stopPendingEventPolling() {
+      if (pendingEventPollingInterval) {
+        clearInterval(pendingEventPollingInterval);
+        pendingEventPollingInterval = null;
+      }
+      isPollingPendingEvent = false;
+    }
+
     function applyAuthenticatedView(session, { focusMic = false } = {}) {
       authState = session;
       document.body.setAttribute('data-auth', 'authenticated');
@@ -2180,6 +2278,7 @@
       } else {
         stopAdminDashboard();
       }
+      startPendingEventPolling();
       if (focusMic && micBtn) {
         requestAnimationFrame(() => micBtn.focus());
       }
@@ -2215,7 +2314,8 @@
       clearStageTimers();
       isProcessing = false;
       cancelActiveRecording();
-      stopActiveAudio(true);
+      clearAudioQueue();
+      stopPendingEventPolling();
       clearAuthSession();
       resetDashboardToInitialCopy();
 
@@ -2237,7 +2337,8 @@
         clearStageTimers();
         isProcessing = false;
         cancelActiveRecording();
-        stopActiveAudio(true);
+        clearAudioQueue();
+        stopPendingEventPolling();
         clearAuthSession();
         resetDashboardToInitialCopy();
         openLoginModal({ clearUsername: true });
@@ -2403,6 +2504,8 @@
         RATE_LIMITED: 'تعداد تلاش‌های ورود بیش از حد مجاز است. لطفاً کمی بعد دوباره تلاش کنید.',
         UNAUTHORIZED: 'احراز هویت با سرور انجام نشد. لطفاً دوباره وارد شوید.',
         HA_UNREACHABLE: 'ارتباط با سیستم هوشمند این طبقه قطع است و در حال حاضر دسترسی ندارم.',
+        ha_offline: 'ارتباط با سیستم هوشمند این طبقه قطع است و در حال حاضر دسترسی ندارم.',
+        HA_TIMEOUT: 'سیستم هوشمند به موقع پاسخ نداد (پایان مهلت زمانی ارتباط).',
         HA_UNAUTHORIZED: 'احراز هویت با سیستم هوشمند این طبقه ناموفق بود. توکن دسترسی را بررسی کنید.',
         HA_EXECUTION_ERROR: 'اجرای فرمان در سیستم خانه هوشمند با خطا مواجه شد. لطفاً ارتباط با تجهیزات را بررسی کنید.',
         VALIDATION_ERROR: 'اطلاعات ارسالی به سرور معتبر نبود. لطفاً دوباره تلاش کنید.',
@@ -2491,7 +2594,7 @@
       let activeStream = null;
 
       try {
-        stopActiveAudio(true);
+        clearAudioQueue();
         if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
           throw new Error('MediaDevices API unavailable');
         }
@@ -2644,60 +2747,89 @@
         const objectUrl = URL.createObjectURL(audioBlob);
         activeAudioObjectUrl = objectUrl;
 
-        audioPlayer.onended = () => {
-          if (seq !== audioFetchSeq) return;
-          stopActiveAudio(true);
-          if (!currentController.signal.aborted && canUseVoiceController()) {
-            if (!preserveErrorState) {
-              setUIState('idle', 'آماده دریافت فرمان بعدی', 'IDLE');
-            }
-            showReplayButton(safeAudioUrl);
-          }
-        };
-        audioPlayer.onerror = () => {
-          if (seq !== audioFetchSeq) return;
-          stopActiveAudio(true);
-          if (currentController.signal.aborted || !canUseVoiceController()) return;
-          setResponseMessage(
-            `${baseMessage}\nفایل صوتی پاسخ بارگذاری نشد.`,
-            'is-warning'
-          );
-          setResponseMeta('AUDIO_LOAD_ERROR', 'is-warning');
-          setUIState('warning', 'فرمان اجرا شد (خطا در بارگذاری فایل صوتی)', 'AUDIO ERROR');
-          showReplayButton(safeAudioUrl);
-        };
+        await new Promise((resolve) => {
+          let isResolved = false;
+          const finish = () => {
+            if (isResolved) return;
+            isResolved = true;
+            resolve();
+          };
 
-        audioPlayer.src = objectUrl;
-        await audioPlayer.play();
-        if (seq !== audioFetchSeq || currentController.signal.aborted || !canUseVoiceController()) return;
-      } catch (playErr) {
-        if (
-          (playErr && playErr.name === 'AbortError') ||
-          seq !== audioFetchSeq ||
-          currentController.signal.aborted ||
-          !canUseVoiceController()
-        ) {
-          return;
-        }
-        stopActiveAudio(true);
-        console.warn('Audio playback blocked or failed:', playErr);
-        if (playErr && playErr.name === 'NotAllowedError') {
-          setResponseMessage(
-            `${baseMessage}\nپخش خودکار صدا توسط مرورگر مسدود شد. برای شنیدن پاسخ، دکمه پخش مجدد را بزنید.`,
-            'is-warning'
-          );
-          setResponseMeta('AUTOPLAY BLOCKED', 'is-warning');
-          setUIState('warning', 'فرمان اجرا شد (نیاز به تایید پخش صدا)', 'AUTOPLAY BLOCKED');
-        } else {
-          setResponseMessage(
-            `${baseMessage}\nفایل صوتی پاسخ قابل پخش نبود.`,
-            'is-warning'
-          );
-          const errMeta = (playErr && playErr.errorCode) ? playErr.errorCode : 'AUDIO_PLAYBACK_ERROR';
-          setResponseMeta(errMeta, 'is-warning');
-          setUIState('warning', 'فرمان اجرا شد (خطا در پخش فایل صوتی)', 'AUDIO ERROR');
-        }
-        showReplayButton(safeAudioUrl);
+          audioPlayer.onended = () => {
+            if (seq !== audioFetchSeq) {
+              finish();
+              return;
+            }
+            const wasAborted = currentController.signal.aborted;
+            if (activeAudioAbortController === currentController) {
+              activeAudioAbortController = null;
+            }
+            stopActiveAudio(true);
+            if (!wasAborted && canUseVoiceController()) {
+              if (!preserveErrorState) {
+                setUIState('idle', 'آماده دریافت فرمان بعدی', 'IDLE');
+              }
+              showReplayButton(safeAudioUrl);
+            }
+            finish();
+          };
+
+          audioPlayer.onerror = () => {
+            if (seq !== audioFetchSeq) {
+              finish();
+              return;
+            }
+            stopActiveAudio(true);
+            if (currentController.signal.aborted || !canUseVoiceController()) {
+              finish();
+              return;
+            }
+            setResponseMessage(
+              `${baseMessage}\nفایل صوتی پاسخ بارگذاری نشد.`,
+              'is-warning'
+            );
+            setResponseMeta('AUDIO_LOAD_ERROR', 'is-warning');
+            setUIState('warning', 'فرمان اجرا شد (خطا در بارگذاری فایل صوتی)', 'AUDIO ERROR');
+            showReplayButton(safeAudioUrl);
+            finish();
+          };
+
+          audioPlayer.src = objectUrl;
+          const playPromise = audioPlayer.play();
+          if (playPromise !== undefined) {
+            playPromise.catch((playErr) => {
+              if (
+                (playErr && playErr.name === 'AbortError') ||
+                seq !== audioFetchSeq ||
+                currentController.signal.aborted ||
+                !canUseVoiceController()
+              ) {
+                finish();
+                return;
+              }
+              stopActiveAudio(true);
+              console.warn('Audio playback blocked or failed:', playErr);
+              if (playErr && playErr.name === 'NotAllowedError') {
+                setResponseMessage(
+                  `${baseMessage}\nپخش خودکار صدا توسط مرورگر مسدود شد. برای شنیدن پاسخ، دکمه پخش مجدد را بزنید.`,
+                  'is-warning'
+                );
+                setResponseMeta('AUTOPLAY BLOCKED', 'is-warning');
+                setUIState('warning', 'فرمان اجرا شد (نیاز به تایید پخش صدا)', 'AUTOPLAY BLOCKED');
+              } else {
+                setResponseMessage(
+                  `${baseMessage}\nفایل صوتی پاسخ قابل پخش نبود.`,
+                  'is-warning'
+                );
+                const errMeta = (playErr && playErr.errorCode) ? playErr.errorCode : 'AUDIO_PLAYBACK_ERROR';
+                setResponseMeta(errMeta, 'is-warning');
+                setUIState('warning', 'فرمان اجرا شد (خطا در پخش فایل صوتی)', 'AUDIO ERROR');
+              }
+              showReplayButton(safeAudioUrl);
+              finish();
+            });
+          }
+        });
       } finally {
         if (activeAudioAbortController === currentController) {
           activeAudioAbortController = null;
@@ -2724,11 +2856,6 @@
           setUIState('reasoning', 'تحلیل فرمان در مدل محلی (Qwen 3.5)...', 'REASONING');
         }
       }, 1100));
-      stageTimers.push(setTimeout(() => {
-        if (canUseVoiceController() && isProcessing) {
-          setUIState('executing', 'ارسال دستور به Home Assistant...', 'EXECUTING');
-        }
-      }, 2400));
 
       const formData = new FormData();
       formData.append('audio', audioBlob, 'command.webm');
@@ -2772,8 +2899,17 @@
               `HTTP ${response.status} · ${sanitizeRawTextSnippet(rawText) || 'ERROR'}`,
               'HTTP_ERROR'
             );
+          if (parsed && typeof parsed.transcript === 'string' && parsed.transcript.trim()) {
+            transcriptText.textContent = parsed.transcript.trim();
+          }
           if (parsed && parsed.error_code === 'HA_UNREACHABLE') {
             actionValue.textContent = 'آفلاین / عدم دسترسی';
+            actionValue.className = 'metric-value is-error';
+          } else if (parsed && parsed.error_code === 'HA_UNAUTHORIZED') {
+            actionValue.textContent = 'خطای توکن Home Assistant';
+            actionValue.className = 'metric-value is-error';
+          } else if (parsed && parsed.error_code === 'HA_TIMEOUT') {
+            actionValue.textContent = 'پایان مهلت Home Assistant';
             actionValue.className = 'metric-value is-error';
           }
           const errAudioUrl = parsed && typeof parsed.audio_url === 'string'
@@ -2834,25 +2970,30 @@
 
         // بروزرسانی اطلاعات داشبورد
         transcriptText.textContent = data.transcript || '—';
-        const cmd = data.parsed_command;
+        const cmd = data.parsed_command || {};
+        const isChat = data.intent === 'chat' || Boolean(cmd && (cmd.domain === 'conversation' || cmd._is_conversation));
         const floorNum = normalizeFloorValue(cmd.floor) === 2 ? 2 : 1;
-        floorValue.textContent = `طبقه ${toPersianDigits(floorNum)}`;
+        floorValue.textContent = isChat ? 'عمومی / گفت‌وگو' : `طبقه ${toPersianDigits(floorNum)}`;
         floorValue.className = 'metric-value';
-        serviceValue.textContent = (cmd.domain && cmd.service) ? `${cmd.domain}.${cmd.service}` : '—';
-        entityValue.textContent = cmd.entity_id || '—';
+        serviceValue.textContent = isChat ? 'گفت‌وگو (LLM)' : ((cmd.domain && cmd.service) ? `${cmd.domain}.${cmd.service}` : '—');
+        entityValue.textContent = isChat ? 'دستیار صوتی' : (cmd.entity_id || '—');
 
         const haExec = data.ha_execution;
-        if (haExec && haExec.ok) {
-          const statusSuffix = haExec.status_code ? ` (${haExec.status_code})` : '';
-          actionValue.textContent = `اجرا شد${statusSuffix}`;
+        if (isChat) {
+          actionValue.textContent = 'پاسخ هوش مصنوعی';
           actionValue.className = 'metric-value is-success';
+        } else if (haExec && (haExec.status === 'pending' || haExec.ok)) {
+          actionValue.textContent = haExec.status === 'pending' ? 'در حال اجرا (پس‌زمینه)' : 'اجرا شد';
+          actionValue.className = haExec.status === 'pending' ? 'metric-value is-warning' : 'metric-value is-success';
+          setUIState('executing', haExec.status === 'pending' ? 'در حال اجرای دستور در Home Assistant...' : 'ارسال دستور به Home Assistant...', 'EXECUTING');
         } else {
           const errSuffix = (haExec && haExec.status_code) ? ` (${haExec.status_code})` : '';
           actionValue.textContent = `خطا در اجرای Home Assistant${errSuffix}`;
           actionValue.className = 'metric-value is-error';
+          setUIState('error', `خطا در Home Assistant${errSuffix}`, 'HA ERROR');
         }
 
-        const baseMessage = cmd.success_message || cmd.ack_message || 'فرمان با موفقیت پردازش شد.';
+        const baseMessage = data.initial_reply || data.reply || cmd.ack_message || cmd.success_message || 'فرمان با موفقیت پردازش شد.';
 
         // اعتبارسنجی آدرس صوت و پشتیبانی از موتور ترکیبی Edge-TTS / Piper
         const ttsFailed = Boolean(data.tts_status && data.tts_status.ok === false);
@@ -2874,7 +3015,7 @@
             metaDetail = `TTS FALLBACK · ${sanitizeRawTextSnippet(data.tts_status.error, 120)}`;
           }
           setResponseMeta(metaDetail, 'is-warning');
-          setUIState('warning', 'فرمان اجرا شد (پاسخ صوتی در دسترس نیست)', 'TTS FALLBACK');
+          setUIState('warning', 'فرمان پردازش شد (پاسخ صوتی در دسترس نیست)', 'TTS FALLBACK');
           return;
         }
 
@@ -2885,7 +3026,7 @@
         } else {
           setResponseMeta('');
         }
-        await playAudioSource(safeAudioUrl, baseMessage);
+        enqueueAudio(safeAudioUrl, baseMessage);
         if (currentController.signal.aborted || !canUseVoiceController()) return;
       } catch (err) {
         if (
@@ -3477,11 +3618,11 @@
     if (replayBtn) {
       replayBtn.addEventListener('click', async () => {
         if (!canUseVoiceController() || !lastAudioUrl || isProcessing) return;
-        stopActiveAudio(true);
+        clearAudioQueue();
         const currentMessage = responseMessage ? responseMessage.textContent.split('\n')[0] : 'پاسخ صوتی';
         setResponseMessage(currentMessage, 'is-success');
         setResponseMeta('');
-        await playAudioSource(lastAudioUrl, currentMessage);
+        enqueueAudio(lastAudioUrl, currentMessage);
       });
     }
 
