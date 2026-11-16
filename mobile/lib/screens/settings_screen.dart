@@ -165,7 +165,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backgroundColor: const Color(0xFF1E293B),
         elevation: 0,
         title: const Text(
-          'تنظیمات AVA 8',
+          'تنظیمات AVA 9',
           style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
@@ -486,7 +486,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // Version info footer
               const Center(
                 child: Text(
-                  'AVA 8 · نسخه 0.2.1+8',
+                  'AVA 9 · نسخه 0.3.0+9',
                   style: TextStyle(
                     color: Color(0xFF64748B),
                     fontSize: 12,

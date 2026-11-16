@@ -47,6 +47,11 @@ storage/users.json
 storage/cache/
 storage/models/*.onnx
 !storage/models/*.onnx.json
+storage/ava_bms.db
+*.db
+*.sqlite*
+storage/*.db
+storage/*.sqlite*
 
 # Local agent customizations (migrated to global ~/.agents/)
 .agents/

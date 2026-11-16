@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import smtplib
+import sqlite3
 import tempfile
 import threading
 import time
@@ -26,6 +27,7 @@ logger = logging.getLogger("SmartBuildingVoiceGateway.Auth")
 # Constants & Configuration
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
+DB_PATH = Path(os.getenv("AVA_BMS_DB_PATH", str(BASE_DIR / "storage" / "ava_bms.db")))
 USERS_FILE = Path(os.getenv("USERS_FILE", str(BASE_DIR / "storage" / "users.json")))
 
 JWT_ISSUER = "smart-building-voice-gateway"
@@ -197,12 +199,15 @@ def build_error_response(
 class AuthUser:
     username: str
     role: Literal["resident", "admin"]
-    floor: Union[Literal[1, 2], Literal["all"]]
-    default_floor: Literal[1, 2]
+    floor: Union[int, Literal["all"]]
+    default_floor: int
     allowed_floors: Tuple[int, ...]
     auth_method: Literal["jwt", "api_token"]
     expires_at: Optional[int] = None
     email: str = ""
+    id: Optional[int] = None
+    full_name: str = ""
+    phone: str = ""
 
 
 @dataclass(frozen=True)
@@ -210,11 +215,14 @@ class UserRecord:
     username: str
     email: str
     role: Literal["resident", "admin"]
-    floor: Union[Literal[1, 2], Literal["all"]]
-    default_floor: Literal[1, 2]
+    floor: Union[int, Literal["all"]]
+    default_floor: int
     allowed_floors: Tuple[int, ...]
     password_hash: Optional[str]
     active: bool
+    id: Optional[int] = None
+    full_name: str = ""
+    phone: str = ""
 
 
 @dataclass
@@ -229,6 +237,7 @@ class _OTPEntry:
 # ---------------------------------------------------------------------------
 # Thread-Safe State
 # ---------------------------------------------------------------------------
+_db_lock = threading.RLock()
 _users_file_lock = threading.RLock()
 _cached_users_mtime_ns: Optional[int] = None
 _cached_users_path: Optional[Path] = None
@@ -506,55 +515,396 @@ def _record_to_dict(rec: UserRecord) -> Dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# SQLite Database Persistence (storage/ava_bms.db)
+# ---------------------------------------------------------------------------
+DEFAULT_FLOORS = [
+    (1, "طبقه اول", "FL1-8492"),
+    (2, "طبقه دوم", "FL2-3910"),
+    (3, "طبقه سوم", "FL3-7104"),
+    (4, "طبقه چهارم", "FL4-5521"),
+]
+
+
+def get_db_connection() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(DB_PATH), timeout=15.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 5000")
+    return conn
+
+
+def init_db() -> None:
+    """Initializes SQLite tables (floors, users) and performs automatic migration from users.json."""
+    with _db_lock:
+        conn = get_db_connection()
+        try:
+            with conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS floors (
+                        floor_number INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        invite_code TEXT NOT NULL UNIQUE
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS users (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        full_name TEXT NOT NULL,
+                        username TEXT NOT NULL UNIQUE,
+                        email TEXT NOT NULL UNIQUE,
+                        phone TEXT DEFAULT '',
+                        password_hash TEXT NOT NULL,
+                        role TEXT NOT NULL DEFAULT 'resident',
+                        floor_number INTEGER NOT NULL,
+                        active INTEGER NOT NULL DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (floor_number) REFERENCES floors(floor_number)
+                    )
+                    """
+                )
+
+                # Seed default floors if empty
+                cur = conn.execute("SELECT COUNT(*) FROM floors")
+                if cur.fetchone()[0] == 0:
+                    conn.executemany(
+                        "INSERT INTO floors (floor_number, name, invite_code) VALUES (?, ?, ?)",
+                        DEFAULT_FLOORS,
+                    )
+                    logger.info("Seeded 4 default building floors (1 to 4) into ava_bms.db.")
+
+                # Migrate from users.json or seed defaults if users table is empty
+                cur = conn.execute("SELECT COUNT(*) FROM users")
+                if cur.fetchone()[0] == 0:
+                    migrated = _migrate_from_users_json(conn)
+                    if not migrated:
+                        _seed_default_sqlite_users(conn)
+        finally:
+            conn.close()
+
+
+def _migrate_from_users_json(conn: sqlite3.Connection) -> bool:
+    """Migrates existing accounts (ilia, floor2_user, admin) from users.json into SQLite."""
+    if not USERS_FILE.exists():
+        return False
+    try:
+        raw_data = json.loads(USERS_FILE.read_text(encoding="utf-8"))
+        raw_users = raw_data.get("users", []) if isinstance(raw_data, dict) else raw_data
+        if not isinstance(raw_users, list) or not raw_users:
+            return False
+
+        inserted = 0
+        for entry in raw_users:
+            if not isinstance(entry, dict):
+                continue
+            username = str(entry.get("username") or "").strip()
+            if not username:
+                continue
+
+            pw_hash = entry.get("password_hash")
+            if not pw_hash:
+                continue
+
+            role_raw = str(entry.get("role") or "resident").strip().lower()
+            role = "admin" if role_raw == "admin" else "resident"
+
+            raw_floor = entry.get("floor")
+            if role == "admin" or str(raw_floor).strip().lower() == "all":
+                floor_num = 1
+            else:
+                try:
+                    floor_num = int(raw_floor)
+                except (ValueError, TypeError):
+                    floor_num = 1
+
+            if floor_num not in (1, 2, 3, 4):
+                floor_num = 1
+
+            raw_email = str(entry.get("email") or "").strip()
+            email = raw_email if raw_email else f"{username}@building.local"
+
+            full_name = str(entry.get("full_name") or "").strip()
+            if not full_name:
+                if username == "ilia":
+                    full_name = "ایلیا غریب"
+                elif username == "admin":
+                    full_name = "مدیر سیستم"
+                elif username == "floor2_user":
+                    full_name = "کاربر طبقه ۲"
+                else:
+                    full_name = username
+
+            phone = str(entry.get("phone") or "").strip()
+            active = 1 if entry.get("active", True) else 0
+
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO users 
+                (full_name, username, email, phone, password_hash, role, floor_number, active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (full_name, username, email, phone, pw_hash, role, floor_num, active),
+            )
+            inserted += 1
+
+        logger.info(f"Successfully migrated {inserted} accounts from users.json into SQLite.")
+        return inserted > 0
+    except Exception as exc:
+        logger.error(f"Failed to migrate users.json to SQLite: {exc}")
+        return False
+
+
+def _seed_default_sqlite_users(conn: sqlite3.Connection) -> None:
+    """Seeds default accounts into SQLite if users.json was empty or absent."""
+    seed_payloads = _build_seed_users_payload()
+    for item in seed_payloads:
+        uname = item["username"]
+        email = item["email"]
+        pw_hash = item.get("password_hash") or _SEED_DEFAULT_HASHES.get(uname, "")
+        if not pw_hash:
+            continue
+        role = item["role"]
+        floor_num = 1 if role == "admin" or item["floor"] == "all" else int(item["floor"])
+        full_name = "ایلیا غریب" if uname == "ilia" else ("مدیر سیستم" if role == "admin" else f"کاربر طبقه {floor_num}")
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO users 
+            (full_name, username, email, phone, password_hash, role, floor_number, active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+            """,
+            (full_name, uname, email, "", pw_hash, role, floor_num),
+        )
+    logger.info("Seeded initial default users into SQLite.")
+
+
 def ensure_users_file() -> Path:
-    """Ensures users.json exists on disk, seeding it on first run if absent."""
+    """Ensures users.json exists on disk and stays synchronized with SQLite."""
+    init_db()
     with _users_file_lock:
-        if not USERS_FILE.exists():
-            seed_users = _build_seed_users_payload()
-            _write_users_payload_atomic(seed_users, USERS_FILE)
-            logger.info(f"Initialized local user store at '{USERS_FILE.name}' with {len(seed_users)} users.")
+        registry = get_user_registry(force_reload=False)
+        _write_users_payload_atomic([_record_to_dict(u) for u in registry.values()], USERS_FILE)
     return USERS_FILE
 
 
+def get_all_floors() -> List[Dict[str, Any]]:
+    """Returns all 4 registered floors with their metadata and invite codes."""
+    init_db()
+    with _db_lock:
+        conn = get_db_connection()
+        try:
+            cur = conn.execute("SELECT floor_number, name, invite_code FROM floors ORDER BY floor_number ASC")
+            return [dict(row) for row in cur.fetchall()]
+        finally:
+            conn.close()
+
+
+def get_floor_by_code(invite_code: str) -> Optional[Dict[str, Any]]:
+    """Look up a floor by its unique invite code (case-insensitive)."""
+    clean_code = invite_code.strip().upper()
+    if not clean_code:
+        return None
+    init_db()
+    with _db_lock:
+        conn = get_db_connection()
+        try:
+            cur = conn.execute(
+                "SELECT floor_number, name, invite_code FROM floors WHERE UPPER(invite_code) = ?",
+                (clean_code,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+
+def register_resident(
+    full_name: str,
+    email: str,
+    password: str,
+    floor_code: str,
+    phone: str = "",
+    username: Optional[str] = None,
+) -> Tuple[UserRecord, str, int]:
+    """Registers a new resident, strictly locking their account to the floor identified by floor_code."""
+    init_db()
+    clean_name = full_name.strip()
+    if not clean_name:
+        raise GatewayAuthError(
+            status_code=422,
+            detail="نام و نام خانوادگی الزامی است.",
+            error_code="VALIDATION_ERROR",
+            headers=NO_STORE_HEADERS,
+        )
+
+    clean_email = email.strip().lower()
+    if not re.fullmatch(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", clean_email):
+        raise GatewayAuthError(
+            status_code=422,
+            detail="فرمت آدرس ایمیل نامعتبر است.",
+            error_code="INVALID_EMAIL_FORMAT",
+            headers=NO_STORE_HEADERS,
+        )
+
+    if len(password) < MIN_PASSWORD_LENGTH or len(password) > MAX_PASSWORD_LENGTH:
+        raise GatewayAuthError(
+            status_code=422,
+            detail=f"رمز عبور باید بین {MIN_PASSWORD_LENGTH} و {MAX_PASSWORD_LENGTH} کاراکتر باشد.",
+            error_code="WEAK_PASSWORD",
+            headers=NO_STORE_HEADERS,
+        )
+
+    # Validate floor invite code
+    floor_info = get_floor_by_code(floor_code)
+    if floor_info is None:
+        raise GatewayAuthError(
+            status_code=403,
+            detail="کد دعوت طبقه نامعتبر است یا وجود ندارد.",
+            error_code="INVALID_FLOOR_CODE",
+            headers=NO_STORE_HEADERS,
+        )
+
+    floor_number = int(floor_info["floor_number"])
+
+    # Determine username
+    if username and username.strip():
+        chosen_uname = username.strip().lower()
+    else:
+        prefix = clean_email.split("@")[0].strip().lower()
+        chosen_uname = re.sub(r"[^a-z0-9_]+", "", prefix) or f"user_{secrets.randbelow(10000)}"
+
+    with _db_lock:
+        conn = get_db_connection()
+        try:
+            # Check existing email or username
+            cur = conn.execute(
+                "SELECT id, username, email FROM users WHERE LOWER(email) = ? OR LOWER(username) = ?",
+                (clean_email, chosen_uname),
+            )
+            existing = cur.fetchone()
+            if existing:
+                if existing["email"].lower() == clean_email:
+                    raise GatewayAuthError(
+                        status_code=400,
+                        detail="این آدرس ایمیل قبلاً در سامانه ثبت شده است.",
+                        error_code="EMAIL_ALREADY_EXISTS",
+                        headers=NO_STORE_HEADERS,
+                    )
+                else:
+                    chosen_uname = f"{chosen_uname}_{secrets.randbelow(1000)}"
+
+            password_hash = hash_password_pbkdf2(password)
+
+            with conn:
+                cur = conn.execute(
+                    """
+                    INSERT INTO users 
+                    (full_name, username, email, phone, password_hash, role, floor_number, active)
+                    VALUES (?, ?, ?, ?, ?, 'resident', ?, 1)
+                    """,
+                    (clean_name, chosen_uname, clean_email, phone.strip(), password_hash, floor_number),
+                )
+                user_id = cur.lastrowid
+
+            user_record = UserRecord(
+                id=user_id,
+                full_name=clean_name,
+                username=chosen_uname,
+                email=clean_email,
+                phone=phone.strip(),
+                role="resident",
+                floor=floor_number,
+                default_floor=floor_number,
+                allowed_floors=(floor_number,),
+                password_hash=password_hash,
+                active=True,
+            )
+
+            # Invalidate memory cache and sync users.json
+            registry = get_user_registry(force_reload=True)
+            _write_users_payload_atomic([_record_to_dict(u) for u in registry.values()], USERS_FILE)
+
+            # Issue JWT token
+            token, expires_in = create_access_token(user_record)
+            logger.info(
+                f"Registered new resident '{sanitize_for_log(chosen_uname, 64)}' locked to floor {floor_number}."
+            )
+            return user_record, token, expires_in
+        finally:
+            conn.close()
+
+
 def get_user_registry(force_reload: bool = False) -> Dict[str, UserRecord]:
-    """Loads users from users.json with mtime-based caching."""
+    """Loads users from SQLite with mtime-based caching."""
     global _cached_users_mtime_ns, _cached_users_path, _cached_users_by_name
 
-    with _users_file_lock:
-        ensure_users_file()
-        stat = USERS_FILE.stat()
-        if (
-            not force_reload
-            and _cached_users_path == USERS_FILE
-            and _cached_users_mtime_ns == stat.st_mtime_ns
-            and _cached_users_by_name
-        ):
+    with _db_lock:
+        init_db()
+        try:
+            stat = DB_PATH.stat()
+            mtime = stat.st_mtime_ns
+        except OSError:
+            mtime = 0
+
+        if not force_reload and _cached_users_mtime_ns == mtime and _cached_users_by_name:
             return _cached_users_by_name
 
-        raw_data = json.loads(USERS_FILE.read_text(encoding="utf-8"))
-        raw_users = raw_data.get("users", []) if isinstance(raw_data, dict) else raw_data
-        registry: Dict[str, UserRecord] = {}
-        if isinstance(raw_users, list):
-            for entry in raw_users:
-                if not isinstance(entry, dict):
-                    continue
-                rec = _parse_user_dict(entry)
-                if rec is not None:
-                    registry[rec.username] = rec
+        conn = get_db_connection()
+        try:
+            cur = conn.execute(
+                """
+                SELECT id, full_name, username, email, phone, password_hash, role, floor_number, active 
+                FROM users
+                """
+            )
+            registry: Dict[str, UserRecord] = {}
+            for row in cur.fetchall():
+                role_val: Literal["resident", "admin"] = "admin" if row["role"] == "admin" else "resident"
+                if role_val == "admin":
+                    fl: Union[int, Literal["all"]] = "all"
+                    dfl = 1
+                    allowed = (1, 2, 3, 4)
+                else:
+                    fl = int(row["floor_number"])
+                    dfl = fl
+                    allowed = (fl,)
 
-        _cached_users_mtime_ns = stat.st_mtime_ns
-        _cached_users_path = USERS_FILE
-        _cached_users_by_name = registry
-        return registry
+                rec = UserRecord(
+                    id=row["id"],
+                    full_name=row["full_name"],
+                    username=row["username"],
+                    email=row["email"],
+                    phone=row["phone"] or "",
+                    role=role_val,
+                    floor=fl,
+                    default_floor=dfl,
+                    allowed_floors=allowed,
+                    password_hash=row["password_hash"],
+                    active=bool(row["active"]),
+                )
+                registry[rec.username] = rec
+
+            _cached_users_mtime_ns = mtime
+            _cached_users_by_name = registry
+            return registry
+        finally:
+            conn.close()
 
 
 def list_users_public() -> List[Dict[str, Any]]:
-    """Returns non-sensitive metadata for all users in users.json."""
+    """Returns non-sensitive metadata for all users in SQLite."""
     registry = get_user_registry()
     return [
         {
+            "id": rec.id,
+            "full_name": rec.full_name,
             "username": rec.username,
             "email": rec.email,
+            "phone": rec.phone,
             "role": rec.role,
             "floor": rec.floor,
             "default_floor": rec.default_floor,
@@ -566,79 +916,90 @@ def list_users_public() -> List[Dict[str, Any]]:
 
 
 def get_user_by_username(username: str) -> Optional[UserRecord]:
-    return get_user_registry().get(username.strip())
+    clean = username.strip().lower()
+    if not clean:
+        return None
+    registry = get_user_registry()
+    for rec in registry.values():
+        if rec.username.lower() == clean:
+            return rec
+    return None
 
 
 def get_user_by_email(email: str) -> Optional[UserRecord]:
-    norm = email.strip().lower()
-    if not norm:
+    clean = email.strip().lower()
+    if not clean:
         return None
-    for rec in get_user_registry().values():
-        if rec.email.strip().lower() == norm:
+    registry = get_user_registry()
+    for rec in registry.values():
+        if rec.email.lower() == clean or rec.username.lower() == clean:
             return rec
     return None
 
 
 def update_user_password(username: str, new_password: str) -> UserRecord:
-    """Hashes new_password with PBKDF2-HMAC-SHA256 and persists to users.json atomically."""
+    """Hashes new_password with PBKDF2-HMAC-SHA256 and persists to SQLite database."""
     if len(new_password) < MIN_PASSWORD_LENGTH or len(new_password) > MAX_PASSWORD_LENGTH:
         raise ValueError(f"Password must be between {MIN_PASSWORD_LENGTH} and {MAX_PASSWORD_LENGTH} characters.")
 
-    with _users_file_lock:
-        registry = get_user_registry(force_reload=True)
-        existing = registry.get(username.strip())
-        if existing is None:
-            raise KeyError(f"User '{username}' not found.")
+    with _db_lock:
+        init_db()
+        conn = get_db_connection()
+        try:
+            new_hash = hash_password_pbkdf2(new_password)
+            with conn:
+                cur = conn.execute(
+                    "UPDATE users SET password_hash = ?, active = 1 WHERE username = ?",
+                    (new_hash, username.strip()),
+                )
+                if cur.rowcount == 0:
+                    raise KeyError(f"User '{username}' not found.")
 
-        new_hash = hash_password_pbkdf2(new_password)
-        updated = UserRecord(
-            username=existing.username,
-            email=existing.email,
-            role=existing.role,
-            floor=existing.floor,
-            default_floor=existing.default_floor,
-            allowed_floors=existing.allowed_floors,
-            password_hash=new_hash,
-            active=True,
-        )
-        registry[updated.username] = updated
-        _write_users_payload_atomic([_record_to_dict(u) for u in registry.values()], USERS_FILE)
-        get_user_registry(force_reload=True)
-        logger.info(f"Updated PBKDF2 password hash for user '{sanitize_for_log(updated.username, 64)}' in users.json.")
-        return updated
+            registry = get_user_registry(force_reload=True)
+            _write_users_payload_atomic([_record_to_dict(u) for u in registry.values()], USERS_FILE)
+            logger.info(f"Updated PBKDF2 password hash for user '{sanitize_for_log(username, 64)}' in SQLite.")
+            user = get_user_by_username(username)
+            if user is None:
+                raise KeyError(f"User '{username}' not found after update.")
+            return user
+        finally:
+            conn.close()
 
 
 def update_user_email(username: str, new_email: str) -> UserRecord:
-    """Updates a user's email address in users.json."""
+    """Updates a user's email address in SQLite database."""
     cleaned_email = new_email.strip()
     if not re.fullmatch(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", cleaned_email):
         raise ValueError("فرمت ایمیل معتبر نیست.")
 
-    with _users_file_lock:
-        registry = get_user_registry(force_reload=True)
-        existing = registry.get(username.strip())
-        if existing is None:
-            raise KeyError(f"User '{username}' not found.")
-
-        for other in registry.values():
-            if other.username != existing.username and other.email.strip().lower() == cleaned_email.lower():
+    with _db_lock:
+        init_db()
+        conn = get_db_connection()
+        try:
+            cur = conn.execute(
+                "SELECT id FROM users WHERE LOWER(email) = ? AND username != ?",
+                (cleaned_email.lower(), username.strip()),
+            )
+            if cur.fetchone():
                 raise ValueError("این ایمیل قبلاً برای کاربر دیگری ثبت شده است.")
 
-        updated = UserRecord(
-            username=existing.username,
-            email=cleaned_email,
-            role=existing.role,
-            floor=existing.floor,
-            default_floor=existing.default_floor,
-            allowed_floors=existing.allowed_floors,
-            password_hash=existing.password_hash,
-            active=existing.active,
-        )
-        registry[updated.username] = updated
-        _write_users_payload_atomic([_record_to_dict(u) for u in registry.values()], USERS_FILE)
-        get_user_registry(force_reload=True)
-        logger.info(f"Updated email for user '{sanitize_for_log(updated.username, 64)}' in users.json.")
-        return updated
+            with conn:
+                cur = conn.execute(
+                    "UPDATE users SET email = ? WHERE username = ?",
+                    (cleaned_email, username.strip()),
+                )
+                if cur.rowcount == 0:
+                    raise KeyError(f"User '{username}' not found.")
+
+            registry = get_user_registry(force_reload=True)
+            _write_users_payload_atomic([_record_to_dict(u) for u in registry.values()], USERS_FILE)
+            logger.info(f"Updated email for user '{sanitize_for_log(username, 64)}' in SQLite.")
+            user = get_user_by_username(username)
+            if user is None:
+                raise KeyError(f"User '{username}' not found after update.")
+            return user
+        finally:
+            conn.close()
 
 
 def validate_startup_auth_config() -> None:
@@ -1063,14 +1424,17 @@ def verify_access_token(token: str) -> AuthUser:
         raise unauthorized()
 
     return AuthUser(
+        id=user_record.id,
+        full_name=user_record.full_name,
         username=user_record.username,
+        email=user_record.email,
+        phone=user_record.phone,
         role=user_record.role,
         floor=user_record.floor,
         default_floor=user_record.default_floor,
         allowed_floors=user_record.allowed_floors,
         auth_method="jwt",
         expires_at=int(exp),
-        email=user_record.email,
     )
 
 
@@ -1090,14 +1454,17 @@ def authenticate_bearer_header(auth_header: str) -> AuthUser:
         token.encode("utf-8"), expected_api_token.encode("utf-8")
     ):
         return AuthUser(
+            id=0,
+            full_name="M2M Voice API",
             username="api_token",
             role="admin",
             floor="all",
             default_floor=1,
-            allowed_floors=(1, 2),
+            allowed_floors=(1, 2, 3, 4),
             auth_method="api_token",
             expires_at=None,
             email="",
+            phone="",
         )
 
     return verify_access_token(token)
@@ -1163,10 +1530,22 @@ _FLOOR2_EXPLICIT_RE = re.compile(
     r"|\b(?:2nd|second)\s+floor\b)",
     re.IGNORECASE,
 )
+_FLOOR3_EXPLICIT_RE = re.compile(
+    rf"(?:طبق[هۀ]{_PERSIAN_EZAFE_SEP}(?:سوم|سه|۳|3|٣)(?!\w)"
+    r"|\bfloor\s*(?:#|-)?\s*(?:3|three)\b"
+    r"|\b(?:3rd|third)\s+floor\b)",
+    re.IGNORECASE,
+)
+_FLOOR4_EXPLICIT_RE = re.compile(
+    rf"(?:طبق[هۀ]{_PERSIAN_EZAFE_SEP}(?:چهارم|چهار|۴|4|٤)(?!\w)"
+    r"|\bfloor\s*(?:#|-)?\s*(?:4|four)\b"
+    r"|\b(?:4th|fourth)\s+floor\b)",
+    re.IGNORECASE,
+)
 
 
 def detect_explicit_floors(transcript: str) -> Set[int]:
-    """Detects explicit Persian or English references to Floor 1 or Floor 2."""
+    """Detects explicit Persian or English references to Floor 1, 2, 3, or 4."""
     if not isinstance(transcript, str) or not transcript.strip():
         return set()
     detected: Set[int] = set()
@@ -1174,11 +1553,15 @@ def detect_explicit_floors(transcript: str) -> Set[int]:
         detected.add(1)
     if _FLOOR2_EXPLICIT_RE.search(transcript):
         detected.add(2)
+    if _FLOOR3_EXPLICIT_RE.search(transcript):
+        detected.add(3)
+    if _FLOOR4_EXPLICIT_RE.search(transcript):
+        detected.add(4)
     return detected
 
 
 def format_floor_forbidden_detail(disallowed_floors: Set[int], allowed_floors: Tuple[int, ...]) -> str:
-    digit_map = str.maketrans("12", "۱۲")
+    digit_map = str.maketrans("1234", "۱۲۳۴")
     req_str = " و ".join(str(f).translate(digit_map) for f in sorted(disallowed_floors))
     allowed_str = " و ".join(str(f).translate(digit_map) for f in sorted(allowed_floors))
     return f"شما مجاز به کنترل تجهیزات طبقه {req_str} نیستید. دسترسی شما محدود به طبقه {allowed_str} است."
@@ -1197,11 +1580,11 @@ def check_client_floor_override(
     if not override_values:
         return None
 
-    digit_map = str.maketrans("۱۲١٢", "1212")
+    digit_map = str.maketrans("۱۲۳۴١٢٣٤", "12341234")
     for raw_val in override_values:
         if isinstance(raw_val, str):
             stripped = raw_val.strip().translate(digit_map)
-            if stripped in ("1", "2"):
+            if stripped in ("1", "2", "3", "4"):
                 parsed_floor = int(stripped)
                 if parsed_floor not in auth_user.allowed_floors:
                     logger.warning(

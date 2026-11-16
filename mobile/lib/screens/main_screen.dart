@@ -383,7 +383,7 @@ class _MainScreenState extends State<MainScreen> {
             ),
             const SizedBox(width: 8),
             const Text(
-              'AVA 8',
+              'AVA 9',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 16,

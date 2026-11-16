@@ -10,6 +10,7 @@ class StorageService {
   static const String _keyToken = 'auth_token';
   static const String _keyUserJson = 'auth_user_json';
   static const String _keyLastUsername = 'last_username';
+  static const String _keyUserFloor = 'user_floor';
   static const String _keyHandsFree = 'hands_free_enabled';
 
   static const String defaultLocalUrl = 'http://192.168.137.1:8000';
@@ -95,6 +96,12 @@ class StorageService {
     await prefs.setString(_keyToken, user.token);
     await prefs.setString(_keyUserJson, jsonEncode(user.toJson()));
     await prefs.setString(_keyLastUsername, user.username);
+    await prefs.setInt(_keyUserFloor, user.floor);
+  }
+
+  static Future<int?> getUserFloor() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_keyUserFloor);
   }
 
   static Future<AuthUser?> getUser() async {
@@ -128,5 +135,6 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_keyToken);
     await prefs.remove(_keyUserJson);
+    await prefs.remove(_keyUserFloor);
   }
 }

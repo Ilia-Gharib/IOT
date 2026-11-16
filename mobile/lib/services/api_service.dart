@@ -6,6 +6,7 @@ import '../models/auth_user.dart';
 import '../models/process_audio_response.dart';
 import '../models/pending_event_response.dart';
 import 'connection_service.dart';
+import 'storage_service.dart';
 
 class ApiService {
   final ConnectionService _conn = ConnectionService();
@@ -56,6 +57,113 @@ class ApiService {
     }
 
     final detail = data['detail']?.toString() ?? 'نام کاربری یا رمز عبور اشتباه است.';
+    throw Exception(detail);
+  }
+
+  Future<AuthUser> registerResident({
+    required String fullName,
+    required String phone,
+    required String email,
+    required String password,
+    required String floorCode,
+  }) async {
+    var baseUrl = _conn.activeBaseUrl;
+    AuthUser user;
+    try {
+      user = await _registerInternal(
+        baseUrl: baseUrl,
+        fullName: fullName,
+        phone: phone,
+        email: email,
+        password: password,
+        floorCode: floorCode,
+      );
+      _conn.recordSuccess();
+    } catch (e) {
+      final failoverUrl = await _conn.handleRequestFailure(baseUrl);
+      if (failoverUrl != baseUrl) {
+        debugPrint('[ApiService] تلاش مجدد ثبت‌نام روی آدرس جایگزین: $failoverUrl');
+        try {
+          user = await _registerInternal(
+            baseUrl: failoverUrl,
+            fullName: fullName,
+            phone: phone,
+            email: email,
+            password: password,
+            floorCode: floorCode,
+          );
+          _conn.recordSuccess();
+        } catch (e2) {
+          final secondFailover = await _conn.handleRequestFailure(failoverUrl);
+          if (secondFailover != failoverUrl && secondFailover != baseUrl) {
+            debugPrint('[ApiService] تلاش سوم ثبت‌نام روی آدرس لوکال: $secondFailover');
+            user = await _registerInternal(
+              baseUrl: secondFailover,
+              fullName: fullName,
+              phone: phone,
+              email: email,
+              password: password,
+              floorCode: floorCode,
+            );
+            _conn.recordSuccess();
+          } else {
+            rethrow;
+          }
+        }
+      } else {
+        rethrow;
+      }
+    }
+
+    // ذخیره توکن و مشخصات کاربر/طبقه در StorageService
+    await StorageService.saveAuth(user);
+    return user;
+  }
+
+  Future<AuthUser> _registerInternal({
+    required String baseUrl,
+    required String fullName,
+    required String phone,
+    required String email,
+    required String password,
+    required String floorCode,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/auth/register');
+    final response = await http
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'full_name': fullName.trim(),
+            'phone': phone.trim(),
+            'email': email.trim(),
+            'password': password,
+            'floor_code': floorCode.trim(),
+          }),
+        )
+        .timeout(const Duration(seconds: 10));
+
+    Map<String, dynamic> data;
+    try {
+      data = jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+    } catch (_) {
+      throw Exception('پاسخ سرور قابل پردازش نیست (HTTP ${response.statusCode})');
+    }
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      if (data['user'] is Map<String, dynamic>) {
+        final userMap = Map<String, dynamic>.from(data['user'] as Map);
+        if (!userMap.containsKey('token') && (data.containsKey('token') || data.containsKey('access_token'))) {
+          userMap['token'] = data['token'] ?? data['access_token'];
+        }
+        return AuthUser.fromJson(userMap);
+      }
+      return AuthUser.fromJson(data);
+    }
+
+    final detail = data['detail']?.toString() ??
+        data['message']?.toString() ??
+        'خطا در ثبت‌نام ساکن جدید (HTTP ${response.statusCode})';
     throw Exception(detail);
   }
 

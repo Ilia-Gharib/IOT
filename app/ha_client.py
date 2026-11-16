@@ -2,7 +2,9 @@ import logging
 import math
 import os
 import re
-from typing import Any, Dict, Literal, Optional, Set
+import threading
+import time
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 import requests
@@ -15,13 +17,15 @@ logger = logging.getLogger("SmartBuildingVoiceGateway.HA")
 # ---------------------------------------------------------------------------
 HA_OFFLINE_PERSIAN_MESSAGE = "ارتباط با سیستم هوشمند این طبقه قطع است و در حال حاضر دسترسی ندارم."
 
-ALLOWED_DOMAINS: Set[str] = {"light", "switch", "climate", "cover", "fan"}
+ALLOWED_DOMAINS: Set[str] = {"light", "switch", "climate", "cover", "fan", "number", "select"}
 ALLOWED_SERVICES_BY_DOMAIN: Dict[str, Set[str]] = {
     "light": {"turn_on", "turn_off", "toggle"},
     "switch": {"turn_on", "turn_off", "toggle"},
     "cover": {"turn_on", "turn_off", "toggle", "open_cover", "close_cover", "stop_cover"},
     "fan": {"turn_on", "turn_off", "toggle", "set_percentage"},
     "climate": {"turn_on", "turn_off", "toggle", "set_temperature", "set_hvac_mode"},
+    "number": {"set_value"},
+    "select": {"select_option"},
 }
 FORBIDDEN_TARGET_KEYS: Set[str] = {
     "entity_id",
@@ -38,6 +42,8 @@ SAFE_SERVICE_DATA_KEYS: Set[str] = {
     "hvac_mode",
     "percentage",
     "position",
+    "value",
+    "option",
 }
 
 
@@ -50,7 +56,7 @@ def get_allowed_entities() -> Set[str]:
 
 
 def get_ha_instance_config(floor: int) -> Dict[str, str]:
-    """Resolves live URL and Long-Lived Access Token for Floor 1 (:8124) or Floor 2 (:8125)."""
+    """Resolves live URL and Long-Lived Access Token for Floor 1 to 4."""
     if floor == 1:
         url = os.getenv("HA_FLOOR1_URL", "http://localhost:8124").strip() or "http://localhost:8124"
         token = (
@@ -65,7 +71,97 @@ def get_ha_instance_config(floor: int) -> Dict[str, str]:
             or os.getenv("HA_FLOOR2_TOKEN", "").strip()
         )
         return {"url": url, "token": token}
+    if floor in (3, 4):
+        url = os.getenv(f"HA_FLOOR{floor}_URL", "").strip()
+        token = os.getenv(f"HA_TOKEN_FLOOR{floor}", "").strip() or os.getenv(f"HA_FLOOR{floor}_TOKEN", "").strip()
+        return {"url": url, "token": token}
     raise ValueError(f"Unsupported Home Assistant floor: {floor}")
+
+
+# ---------------------------------------------------------------------------
+# Dynamic Floor Entities In-Memory Cache (15s TTL)
+# ---------------------------------------------------------------------------
+_ENTITIES_CACHE_TTL_SECONDS = 15.0
+_entities_cache: Dict[int, Tuple[float, List[Dict[str, Any]]]] = {}
+_entities_cache_lock = threading.Lock()
+
+
+def get_floor_entities_summary(floor: int) -> List[Dict[str, Any]]:
+    """Fetches real registered entities from the target floor's Home Assistant instance with a 15-second cache."""
+    now = time.time()
+    with _entities_cache_lock:
+        cached = _entities_cache.get(floor)
+        if cached is not None:
+            cached_at, cached_entities = cached
+            if now - cached_at < _ENTITIES_CACHE_TTL_SECONDS:
+                return list(cached_entities)
+
+    try:
+        cfg = get_ha_instance_config(floor)
+    except Exception:
+        return []
+
+    base_url = cfg.get("url", "").rstrip("/")
+    token = cfg.get("token", "")
+    if not base_url:
+        return []
+
+    headers: Dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        resp = requests.get(f"{base_url}/api/states", headers=headers, timeout=3.0)
+        if resp.status_code != 200:
+            logger.warning(f"Failed to fetch states from Floor {floor} HA ({base_url}): HTTP {resp.status_code}")
+            with _entities_cache_lock:
+                if floor in _entities_cache:
+                    return list(_entities_cache[floor][1])
+                return []
+
+        states = resp.json()
+        if not isinstance(states, list):
+            return []
+
+        summary: List[Dict[str, Any]] = []
+        for s in states:
+            if not isinstance(s, dict):
+                continue
+            eid = str(s.get("entity_id") or "").strip()
+            if not eid or "." not in eid:
+                continue
+            domain = eid.split(".", 1)[0].lower()
+            if (
+                eid.startswith("sensor.backup_")
+                or eid.startswith("event.backup_")
+                or domain in ("conversation", "zone")
+            ):
+                continue
+            attrs = s.get("attributes") if isinstance(s.get("attributes"), dict) else {}
+            friendly_name = str(attrs.get("friendly_name") or eid).strip()
+            raw_state = str(s.get("state") or "unknown").strip()
+            unit = str(attrs.get("unit_of_measurement") or "").strip()
+            state_display = f"{raw_state} {unit}".strip() if unit else raw_state
+
+            summary.append(
+                {
+                    "entity_id": eid,
+                    "domain": domain,
+                    "friendly_name": friendly_name,
+                    "state": raw_state,
+                    "state_display": state_display,
+                }
+            )
+
+        with _entities_cache_lock:
+            _entities_cache[floor] = (now, summary)
+        return summary
+    except Exception as exc:
+        logger.warning(f"Error fetching entities from Floor {floor} HA ({base_url}): {exc}")
+        with _entities_cache_lock:
+            if floor in _entities_cache:
+                return list(_entities_cache[floor][1])
+        return []
 
 
 class HAServiceError(Exception):
@@ -91,9 +187,9 @@ class HAServiceError(Exception):
 # Strict Pydantic Schema for LLM Home Assistant Commands
 # ---------------------------------------------------------------------------
 class LLMCommandSchema(BaseModel):
-    floor: Literal[1, 2] = Field(description="Target floor number: 1 or 2")
-    domain: Literal["light", "switch", "climate", "cover", "fan"] = Field(
-        description="Home Assistant domain: light, switch, climate, cover, fan"
+    floor: int = Field(default=1, ge=1, le=4, description="Target floor number: 1, 2, 3, or 4")
+    domain: Literal["light", "switch", "climate", "cover", "fan", "number", "select"] = Field(
+        description="Home Assistant domain: light, switch, climate, cover, fan, number, select"
     )
     service: str = Field(min_length=1, description="Home Assistant service")
     entity_id: str = Field(min_length=1, description="Full Home Assistant entity_id, e.g., light.living_room")
@@ -147,8 +243,8 @@ class LLMCommandSchema(BaseModel):
                 if isinstance(val, bool) or not isinstance(val, (int, float)):
                     raise ValueError("service_data['temperature'] must be numeric.")
                 temp_val = float(val)
-                if not (5.0 <= temp_val <= 40.0):
-                    raise ValueError("service_data['temperature'] must be between 5.0 and 40.0.")
+                if not (-30.0 <= temp_val <= 50.0):
+                    raise ValueError("service_data['temperature'] must be between -30.0 and 50.0.")
             if isinstance(val, str):
                 cleaned_str = val.strip()
                 if not cleaned_str or len(cleaned_str) > 64 or re.search(r"[\r\n\x00-\x1f\x7f]", cleaned_str):
@@ -177,7 +273,7 @@ def execute_home_assistant_service(
     parsed_url = urlparse(base_url)
     if parsed_url.scheme not in ("http", "https") or not parsed_url.netloc:
         raise ValueError(f"Invalid Home Assistant URL configured for floor {cmd.floor}.")
-    floor_port = parsed_url.port or (8125 if cmd.floor == 2 else 8124)
+    floor_port = parsed_url.port or (8123 + cmd.floor)
 
     if cmd.domain not in ALLOWED_DOMAINS:
         raise ValueError(f"Disallowed Home Assistant domain: {cmd.domain}")
@@ -213,7 +309,7 @@ def execute_home_assistant_service(
             endpoint,
             headers=headers,
             json=payload,
-            timeout=5,
+            timeout=10,
             allow_redirects=False,
         )
     except requests.exceptions.Timeout as exc:

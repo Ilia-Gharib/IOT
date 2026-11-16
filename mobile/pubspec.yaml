@@ -1,7 +1,7 @@
 name: ava_mobile
-description: "AVA 8 - Smart Building Voice Assistant Mobile Client"
+description: "AVA 9 - Smart Building Voice Assistant Mobile Client"
 publish_to: 'none'
-version: 0.2.1+8
+version: 0.3.0+9
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

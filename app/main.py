@@ -74,10 +74,13 @@ try:
         detect_explicit_floors,
         ensure_users_file,
         format_floor_forbidden_detail,
+        get_all_floors,
+        get_floor_by_code,
         get_user_by_email,
         get_user_registry,
         list_users_public,
         record_login_failure,
+        register_resident,
         request_password_reset_otp,
         require_admin_user,
         require_authenticated_user,
@@ -94,6 +97,7 @@ try:
         HAServiceError,
         LLMCommandSchema,
         execute_home_assistant_service,
+        get_floor_entities_summary,
     )
     from app.monitor import collect_admin_system_stats
 except ImportError:
@@ -114,10 +118,13 @@ except ImportError:
             detect_explicit_floors,
             ensure_users_file,
             format_floor_forbidden_detail,
+            get_all_floors,
+            get_floor_by_code,
             get_user_by_email,
             get_user_registry,
             list_users_public,
             record_login_failure,
+            register_resident,
             request_password_reset_otp,
             require_admin_user,
             require_authenticated_user,
@@ -134,6 +141,7 @@ except ImportError:
             HAServiceError,
             LLMCommandSchema,
             execute_home_assistant_service,
+            get_floor_entities_summary,
         )
         from monitor import collect_admin_system_stats
     except ImportError:
@@ -153,10 +161,13 @@ except ImportError:
             detect_explicit_floors,
             ensure_users_file,
             format_floor_forbidden_detail,
+            get_all_floors,
+            get_floor_by_code,
             get_user_by_email,
             get_user_registry,
             list_users_public,
             record_login_failure,
+            register_resident,
             request_password_reset_otp,
             require_admin_user,
             require_authenticated_user,
@@ -173,6 +184,7 @@ except ImportError:
             HAServiceError,
             LLMCommandSchema,
             execute_home_assistant_service,
+            get_floor_entities_summary,
         )
         from .monitor import collect_admin_system_stats
 
@@ -317,6 +329,19 @@ class OllamaServiceError(Exception):
         self.ollama_running = ollama_running
         self.requested_model = OLLAMA_MODEL if requested_model is None else requested_model
         self.available_models = list(available_models) if available_models is not None else []
+
+
+class RegisterRequest(BaseModel):
+    full_name: str = Field(min_length=2, max_length=128)
+    phone: Optional[str] = Field(default="", max_length=32)
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
+    floor_code: str = Field(min_length=3, max_length=32)
+
+    @field_validator("full_name", "email", "floor_code", mode="before")
+    @classmethod
+    def _strip_strings(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
 
 
 class LoginRequest(BaseModel):
@@ -501,28 +526,70 @@ def _sanitize_chat_reply(text: str) -> str:
     return cleaned
 
 
-def _build_system_prompt(default_floor: int = 1, pending_context: Optional[str] = None) -> str:
-    effective_default = 2 if default_floor == 2 else 1
+def _build_system_prompt(
+    default_floor: int = 1,
+    pending_context: Optional[str] = None,
+    floor_entities: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    effective_default = default_floor if default_floor in (1, 2, 3, 4) else 1
     ctx = f" (نتیجه اقدام قبلی: {pending_context.strip()})" if pending_context and pending_context.strip() else ""
+
+    if floor_entities is None:
+        try:
+            floor_entities = get_floor_entities_summary(effective_default)
+        except Exception:
+            floor_entities = []
+
+    PERSIAN_FRIENDLY_MAP = {
+        "switch.kitchen_refrigerator_express_mode": "حالت اکسپرس (انجماد سریع) یخچال هوشمند LG",
+        "number.kitchen_refrigerator_fridge_temperature": "تنظیم دمای یخچال هوشمند LG",
+        "number.kitchen_refrigerator_freezer_temperature": "تنظیم دمای فریزر هوشمند LG",
+        "select.kitchen_refrigerator_fresh_air_filter": "فیلتر هوای تازه یخچال هوشمند LG",
+        "binary_sensor.kitchen_refrigerator_door": "سنسور درب یخچال هوشمند LG",
+        "sensor.kitchen_refrigerator_water_filter": "وضعیت فیلتر آب یخچال هوشمند LG",
+        "sensor.kitchen_refrigerator_water_filter_used": "مدت کارکرد فیلتر آب یخچال هوشمند LG",
+    }
+
+    # Format real registered devices for this specific floor
+    actionable_lines = []
+    actionable_names = []
+    for e in floor_entities:
+        eid = e.get("entity_id", "")
+        domain = e.get("domain", "")
+        if domain in ("light", "switch", "climate", "cover", "fan", "number", "select"):
+            fn = PERSIAN_FRIENDLY_MAP.get(eid) or e.get("friendly_name") or eid
+            st = e.get("state_display") or e.get("state") or "unknown"
+            actionable_lines.append(f"- {fn} (شناسه: {eid}، دامنه: {domain}، وضعیت فعلی: {st})")
+            actionable_names.append(fn)
+
+    if actionable_lines:
+        devices_list_str = "\n".join(actionable_lines)
+        device_summary_text = "، ".join(actionable_names[:6])
+    else:
+        devices_list_str = f"(در حال حاضر هیچ وسیله کنترلی یا چراغی برای طبقه {effective_default} در سامانه ثبت نشده است)"
+        device_summary_text = "هیچ دستگاه فعالی"
+
     return (
-        f"تو «آوا» (Ava) هستی؛ دستیار صوتی هوشمند، سریع، صمیمی و دقیق خانه هوشمند (طبقه پیش‌فرض: {effective_default}){ctx}.\n"
-        "وظیفه اصلی تو کنترل تجهیزات خانه هوشمند و همراهی صمیمانه با ساکنان خانه است.\n\n"
-        "### قوانین الزامی تشخیص قصد (Intent):\n"
-        "1. **کنترل تجهیزات (iot_action)**: هرگونه دستور مستقیم، تمایل یا اشاره غیرمستقیم کاربر به تغییر وضعیت یا کنترل تجهیزات خانه "
-        "(مانند لامپ و روشنایی، کولر و گرمایش و تنظیم دما، پرده‌ها، پریزها، فن و لوازم برقی) باید بدون استثنا به صورت «iot_action» پردازش شود. "
-        "حتی اگر کاربر غیرمستقیم صحبت کرد (مثلاً «خیلی تاریکه»، «هوا گرمه»، «می‌خوام بخوابم»، «صدای تلویزیون زیاده»، «سردم شد»)، آن را معادل تغییر وضعیت تجهیزات مربوطه در نظر بگیر و هرگز به مکالمه عادی نبر!\n"
-        f"قالب خروجی iot_action: {{\"intent\": \"iot_action\", \"initial_reply\": \"تایید صوتی گرم، کوتاه و محاوره‌ای به زبان فارسی\", \"ha_action\": {{\"domain\": \"light|switch|climate|cover|fan\", \"service\": \"turn_on|turn_off|open_cover|close_cover|set_temperature\", \"entity_id\": \"domain.device_name\", \"floor\": {effective_default}, \"data\": {{}}}}}}\n\n"
-        "2. **گفت‌وگوی روزمره (chat)**: صرفاً زمانی که کاربر سلام و احوال‌پرسی می‌کند، درباره خودت می‌پرسد یا گپ صمیمانه می‌زند و هیچ درخواستی برای تجهیزات خانه ندارد.\n"
-        "قالب خروجی chat: {\"intent\": \"chat\", \"reply\": \"پاسخ کوتاه، مهربان و محاوره‌ای به فارسی\"}\n\n"
-        "### مثال‌های الگو (Few-Shot Examples):\n"
-        f"- کاربر: \"چراغ سالن رو روشن کن\" -> {{\"intent\": \"iot_action\", \"initial_reply\": \"چشم، چراغ سالن روشن شد.\", \"ha_action\": {{\"domain\": \"light\", \"service\": \"turn_on\", \"entity_id\": \"light.living_room\", \"floor\": {effective_default}}}}}\n"
-        f"- کاربر: \"اینجا خیلی تاریکه هیچی پیدا نیست\" -> {{\"intent\": \"iot_action\", \"initial_reply\": \"حتماً، الان چراغ‌ها رو برات روشن می‌کنم.\", \"ha_action\": {{\"domain\": \"light\", \"service\": \"turn_on\", \"entity_id\": \"light.living_room\", \"floor\": {effective_default}}}}}\n"
-        f"- کاربر: \"کولر رو خاموش کن سردم شد\" -> {{\"intent\": \"iot_action\", \"initial_reply\": \"چشم، کولر خاموش شد.\", \"ha_action\": {{\"domain\": \"climate\", \"service\": \"turn_off\", \"entity_id\": \"climate.ac\", \"floor\": {effective_default}}}}}\n"
-        f"- کاربر: \"خیلی گرمه دما رو بذار روی ۲۲\" -> {{\"intent\": \"iot_action\", \"initial_reply\": \"حتماً، دما رو روی ۲۲ درجه گذاشتم.\", \"ha_action\": {{\"domain\": \"climate\", \"service\": \"set_temperature\", \"entity_id\": \"climate.thermostat\", \"floor\": {effective_default}, \"data\": {{\"temperature\": 22}}}}}}\n"
-        f"- کاربر: \"پرده‌ها رو بکش آفتاب چشمم رو می‌زنه\" -> {{\"intent\": \"iot_action\", \"initial_reply\": \"چشم، پرده‌ها رو بستم.\", \"ha_action\": {{\"domain\": \"cover\", \"service\": \"close_cover\", \"entity_id\": \"cover.living_room\", \"floor\": {effective_default}}}}}\n"
-        f"- کاربر: \"پریز برق قهوه‌ساز رو قطع کن\" -> {{\"intent\": \"iot_action\", \"initial_reply\": \"چشم، پریز قهوه‌ساز خاموش شد.\", \"ha_action\": {{\"domain\": \"switch\", \"service\": \"turn_off\", \"entity_id\": \"switch.coffee_maker\", \"floor\": {effective_default}}}}}\n"
-        f"- کاربر: \"سلام آوا روزت بخیر چطوری؟\" -> {{\"intent\": \"chat\", \"reply\": \"سلام عزیزم! من عالی‌ام، در خدمتم هر کاری داشتی بگو.\"}}\n\n"
-        "قانون خروجی: فقط و فقط یک آبجکت معتبر JSON خروجی بده بدون هیچ توضیح یا متن اضافه."
+        f"تو «آوا» (Ava) هستی؛ دستیار صوتی هوشمند، سریع، صمیمی و دقیق خانه هوشمند (طبقه پیش‌فرض کاربر: {effective_default}){ctx}.\n"
+        "وظیفه اصلی تو کنترل تجهیزات واقعی ثبت‌شده در طبقه کاربر و همراهی صمیمانه با او است.\n\n"
+        f"### لیست واقعی دستگاه‌های ثبت‌شده در طبقه {effective_default}:\n"
+        f"{devices_list_str}\n\n"
+        "### قوانین بسیار مهم و الزامی تصمیم‌گیری:\n"
+        "1. **کنترل تجهیزات موجود (iot_action)**:\n"
+        "   - اگر درخواست کاربر (مستقیم یا غیرمستقیم، مانند «روشن کن»، «خاموش کن»، «تنظیم دما»، «حالت اکسپرس یخچال») متناسب با یکی از وسایل موجود در لیست واقعی بالا بود، فقط و دقیقاً با همان شناسه واقعی (entity_id) و دامنه مربوطه دستور صادر کن.\n"
+        f"   - برای کلیدها (switch) از service: \"turn_on\" یا \"turn_off\" استفاده کن.\n"
+        f"   - برای مقادیر عددی (number مانند دمای یخچال یا فریزر) از domain: \"number\" و service: \"set_value\" و data: {{\"value\": عدد}} استفاده کن.\n"
+        f"   - برای انتخاب گزینه‌ها (select مانند فیلتر هوا) از service: \"select_option\" و data: {{\"option\": \"auto|power\"}} استفاده کن.\n"
+        f"   قالب خروجی iot_action: {{\"intent\": \"iot_action\", \"initial_reply\": \"تایید کوتاه صوتی فارسی\", \"ha_action\": {{\"domain\": \"light|switch|climate|cover|fan|number|select\", \"service\": \"turn_on|turn_off|set_value|select_option\", \"entity_id\": \"<دقیقاً شناسه از لیست بالا>\", \"floor\": {effective_default}, \"data\": {{}}}}}}\n\n"
+        "2. **دستگاه‌های ثبت‌نشده در این طبقه (بسیار مهم - عدم ساخت entity_id خیالی)**:\n"
+        f"   - اگر کاربر وسیله‌ای خواست که متناسب با آن هیچ دستگاهی در لیست بالای طبقه {effective_default} ثبت نشده است (مثلاً کاربر گفت: «چراغ رو روشن کن»، «اینجا تاریکه»، «هوا گرمه کولر رو بزن»، «پرده‌ها رو ببند» اما هیچ چراغ، کولر یا پرده‌ای در لیست بالا وجود ندارد):\n"
+        "   - به هیچ عنوان و اکیداً یک entity_id خیالی یا فرضی (مانند light.living_room یا climate.ac) نساز!\n"
+        "   - به هیچ وجه قصد iot_action صادر نکن!\n"
+        f"   - در قالب «chat» به زبان فارسی محاوره‌ای و گرم بگو که این دستگاه در طبقه شما ثبت نشده است و دستگاه‌های موجود فعلی طبقه (مانند: {device_summary_text}) را نام ببر.\n"
+        f"   مثال: اگر چراغ در لیست بالا نبود و کاربر گفت «اینجا خیلی تاریکه»، بگو: {{\"intent\": \"chat\", \"reply\": \"متاسفانه در طبقه {effective_default} چراغی ثبت نشده است. در حال حاضر دستگاه‌های موجود این طبقه شامل {device_summary_text} است.\"}}\n\n"
+        "3. **گفت‌وگوی روزمره (chat)**:\n"
+        "   - برای سلام، احوال‌پرسی یا گپ صمیمانه، با قصد chat و پیام کوتاه فارسی پاسخ بده: {{\"intent\": \"chat\", \"reply\": \"پاسخ فارسی صمیمی\"}}\n\n"
+        "خروجی الزامی: فقط و فقط یک آبجکت معتبر JSON بدون هیچ توضیح اضافه."
     )
 
 
@@ -666,21 +733,21 @@ def _extract_chat_content(response: Any) -> str:
 
 
 def _normalize_floor(raw_floor: Any, default_floor: int = 1) -> int:
-    effective_default = 2 if default_floor == 2 else 1
+    effective_default = default_floor if default_floor in (1, 2, 3, 4) else 1
     if raw_floor is None:
         return effective_default
     if isinstance(raw_floor, bool):
         raise ValueError("Boolean value is not valid for floor.")
     if isinstance(raw_floor, int):
-        if raw_floor in (1, 2):
+        if raw_floor in (1, 2, 3, 4):
             return raw_floor
         raise ValueError(f"Unsupported integer floor value: {raw_floor}")
     if isinstance(raw_floor, float):
-        if math.isfinite(raw_floor) and raw_floor in (1.0, 2.0):
+        if math.isfinite(raw_floor) and int(raw_floor) in (1, 2, 3, 4) and raw_floor == int(raw_floor):
             return int(raw_floor)
         raise ValueError(f"Unsupported float floor value: {raw_floor}")
     if isinstance(raw_floor, str):
-        digit_map = str.maketrans("۱۲١٢", "1212")
+        digit_map = str.maketrans("۱۲۳۴١٢٣٤", "12341234")
         stripped = raw_floor.strip().translate(digit_map).lower()
         if stripped in ("", "null", "none"):
             return effective_default
@@ -688,6 +755,10 @@ def _normalize_floor(raw_floor: Any, default_floor: int = 1) -> int:
             return 1
         if stripped in ("2", "floor 2", "floor2", "طبقه 2", "طبقه دوم", "طبقه دو"):
             return 2
+        if stripped in ("3", "floor 3", "floor3", "طبقه 3", "طبقه سوم", "طبقه سه"):
+            return 3
+        if stripped in ("4", "floor 4", "floor4", "طبقه 4", "طبقه چهارم", "طبقه چهار"):
+            return 4
         raise ValueError(f"Unrecognized floor value: {sanitize_for_log(raw_floor, 50)}")
     raise ValueError("Unsupported floor type.")
 
@@ -787,9 +858,20 @@ def reason_with_qwen(
     transcript: str,
     default_floor: int = 1,
     pending_context: Optional[str] = None,
+    floor_entities: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    effective_default = 2 if default_floor == 2 else 1
-    system_prompt = _build_system_prompt(default_floor=effective_default, pending_context=pending_context)
+    effective_default = default_floor if default_floor in (1, 2, 3, 4) else 1
+    if floor_entities is None:
+        try:
+            floor_entities = get_floor_entities_summary(effective_default)
+        except Exception:
+            floor_entities = []
+
+    system_prompt = _build_system_prompt(
+        default_floor=effective_default,
+        pending_context=pending_context,
+        floor_entities=floor_entities,
+    )
 
     try:
         list_response = _call_ollama_list()
@@ -912,6 +994,19 @@ def reason_with_qwen(
         if not isinstance(data_val, dict):
             data_val = {}
 
+        # Domain & Service Normalization
+        if domain_val == "number":
+            service_val = "set_value"
+            if "temperature" in data_val and "value" not in data_val:
+                data_val["value"] = data_val.pop("temperature")
+            if "value" not in data_val:
+                match = re.search(r"[-+]?\d+", transcript)
+                if match:
+                    data_val["value"] = int(match.group(0))
+        elif domain_val == "select":
+            if service_val != "select_option":
+                service_val = "select_option"
+
         initial_reply_text = str(
             parsed_dict.get("initial_reply")
             or parsed_dict.get("ack_message")
@@ -972,6 +1067,10 @@ def _format_ha_success_report(command_data: LLMCommandSchema, ha_result: Dict[st
         "light.bedroom": "چراغ اتاق خواب",
         "light.hallway": "چراغ راهرو",
         "switch.fridge_express_freeze": "انجماد سریع یخچال",
+        "switch.kitchen_refrigerator_express_mode": "حالت اکسپرس یخچال هوشمند LG",
+        "number.kitchen_refrigerator_fridge_temperature": "دمای یخچال هوشمند LG",
+        "number.kitchen_refrigerator_freezer_temperature": "دمای فریزر هوشمند LG",
+        "select.kitchen_refrigerator_fresh_air_filter": "فیلتر هوای تازه یخچال هوشمند LG",
         "switch.water_heater": "پکیج آبگرمکن",
         "switch.coffee_maker": "قهوه‌ساز",
         "climate.main_thermostat": "ترموستات",
@@ -984,11 +1083,18 @@ def _format_ha_success_report(command_data: LLMCommandSchema, ha_result: Dict[st
         return f"{entity_fa} {floor_str} خاموش شد."
     if service in ("toggle",):
         return f"وضعیت {entity_fa} {floor_str} تغییر کرد."
-    if service in ("set_temperature",):
-        temp = (command_data.service_data or {}).get("temperature")
-        if temp is not None:
-            return f"دمای {entity_fa} روی {temp} تنظیم شد."
-        return f"دمای {entity_fa} {floor_str} تنظیم شد."
+    if service in ("set_temperature", "set_value"):
+        val = (command_data.service_data or {}).get("value")
+        if val is None:
+            val = (command_data.service_data or {}).get("temperature")
+        if val is not None:
+            return f"{entity_fa} {floor_str} روی {val} تنظیم شد."
+        return f"{entity_fa} {floor_str} تنظیم شد."
+    if service in ("select_option",):
+        opt = (command_data.service_data or {}).get("option")
+        if opt:
+            return f"{entity_fa} {floor_str} روی {opt} قرار گرفت."
+        return f"{entity_fa} {floor_str} تنظیم شد."
 
     if command_data.success_message and len(command_data.success_message.split()) <= 10:
         return command_data.success_message
@@ -1410,7 +1516,10 @@ async def security_and_error_middleware(request: Request, call_next):
             ("HEAD", "/health"),
             ("GET", "/api/gateway-info"),
             ("HEAD", "/api/gateway-info"),
+            ("GET", "/api/floors"),
+            ("HEAD", "/api/floors"),
             ("POST", "/api/login"),
+            ("POST", "/api/auth/register"),
             ("POST", "/api/auth/forgot-password"),
             ("POST", "/api/auth/verify-otp"),
             ("POST", "/api/auth/reset-password"),
@@ -1627,6 +1736,80 @@ async def login(request: Request, payload: LoginRequest):
     )
 
 
+@app.post("/api/auth/register")
+async def register(request: Request, payload: RegisterRequest):
+    client_ip = request.client.host if request.client and request.client.host else "unknown"
+    retry_after = check_login_rate_limit(f"reg:{client_ip}")
+    if retry_after is not None:
+        return build_error_response(
+            status_code=429,
+            detail="تعداد تلاش‌های ثبت‌نام بیش از حد مجاز است. لطفاً کمی بعد دوباره تلاش کنید.",
+            stage="auth",
+            error_code="RATE_LIMITED",
+            headers={**NO_STORE_HEADERS, "Retry-After": str(retry_after)},
+        )
+
+    try:
+        user_record, token, expires_in = await asyncio.to_thread(
+            register_resident,
+            full_name=payload.full_name,
+            email=payload.email,
+            password=payload.password,
+            floor_code=payload.floor_code,
+            phone=payload.phone or "",
+        )
+    except GatewayAuthError as exc:
+        record_login_failure(f"reg:{client_ip}")
+        return build_error_response(
+            status_code=exc.status_code,
+            detail=exc.detail,
+            stage=exc.stage,
+            error_code=exc.error_code,
+            headers=exc.headers or NO_STORE_HEADERS,
+        )
+
+    clear_login_failures(f"reg:{client_ip}")
+    logger.info(
+        f"New resident registered: username='{sanitize_for_log(user_record.username, 64)}', floor={user_record.floor}"
+    )
+    return JSONResponse(
+        status_code=200,
+        content={
+            "authenticated": True,
+            "token": token,
+            "token_type": "Bearer",
+            "expires_in": expires_in,
+            "username": user_record.username,
+            "email": user_record.email,
+            "role": user_record.role,
+            "floor": user_record.floor,
+            "allowed_floors": list(user_record.allowed_floors),
+            "user": {
+                "id": user_record.id,
+                "full_name": user_record.full_name,
+                "username": user_record.username,
+                "email": user_record.email,
+                "phone": user_record.phone,
+                "role": user_record.role,
+                "floor": user_record.floor,
+                "allowed_floors": list(user_record.allowed_floors),
+            },
+        },
+        headers=NO_STORE_HEADERS,
+    )
+
+
+@app.get("/api/floors")
+async def list_floors():
+    """Lists building floors and public metadata."""
+    floors = await asyncio.to_thread(get_all_floors)
+    return JSONResponse(
+        status_code=200,
+        content={"ok": True, "floors": floors},
+        headers=NO_STORE_HEADERS,
+    )
+
+
 @app.post("/api/auth/forgot-password")
 async def forgot_password(request: Request, payload: ForgotPasswordRequest):
     client_ip = request.client.host if request.client and request.client.host else "unknown"
@@ -1664,8 +1847,11 @@ async def get_current_user_profile(auth_user: AuthUser = Depends(require_authent
         status_code=200,
         content={
             "authenticated": True,
+            "id": auth_user.id,
+            "full_name": auth_user.full_name,
             "username": auth_user.username,
             "email": auth_user.email,
+            "phone": auth_user.phone,
             "role": auth_user.role,
             "floor": auth_user.floor,
             "allowed_floors": list(auth_user.allowed_floors),
@@ -1988,9 +2174,10 @@ async def process_audio(request: Request):
 
         # 4. Ollama Reasoning (qwen3.5:4b) with Intent Routing & Context Injection
         current_stage = "llm"
+        user_floor = auth_user.floor if isinstance(auth_user.floor, int) else auth_user.default_floor
         try:
             decision = await asyncio.to_thread(
-                reason_with_qwen, transcript, auth_user.default_floor, pending_context
+                reason_with_qwen, transcript, user_floor, pending_context
             )
         except OllamaServiceError as llm_err:
             err_audio_url, _ = await _prepare_user_audio_response(
