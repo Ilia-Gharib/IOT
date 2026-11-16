@@ -417,6 +417,15 @@ class CloudflareTunnelSupervisor:
                     if any(k in line_lower for k in ("registered tunnel connection", "registered connection", "error", "failed", "status 429", "warning", "fatal")):
                         print(f"[TUNNEL:cloudflared] {line}", flush=True)
 
+                    # Auto-recover if Cloudflare edge expires the session or rejects the tunnel
+                    if "unauthorized: tunnel not found" in line_lower:
+                        print("[TUNNEL] Detected expired Quick Tunnel on Cloudflare edge. Recycling cloudflared for a new tunnel...", flush=True)
+                        try:
+                            self._process.terminate()
+                        except Exception:
+                            pass
+                        break
+
                 self._process.wait()
                 exit_code = self._process.returncode
                 if self._stop_event.is_set():

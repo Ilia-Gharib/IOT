@@ -18,17 +18,37 @@ class AuthUser {
   });
 
   factory AuthUser.fromJson(Map<String, dynamic> json) {
+    final floorVal = json['floor'];
+    int parsedFloor = 1;
+    if (floorVal is int) {
+      parsedFloor = floorVal;
+    } else if (floorVal != null) {
+      parsedFloor = int.tryParse(floorVal.toString()) ?? 1;
+    }
+
+    List<int> parsedAllowedFloors = [parsedFloor];
+    if (json['allowed_floors'] is List) {
+      parsedAllowedFloors = (json['allowed_floors'] as List<dynamic>)
+          .map((e) => e is int ? e : int.tryParse(e.toString()) ?? parsedFloor)
+          .toList();
+    }
+
+    final rawToken = json['token'] ?? json['access_token'] ?? '';
+    final usernameVal = json['username'] as String? ??
+        json['full_name'] as String? ??
+        json['name'] as String? ??
+        '';
+
     return AuthUser(
-      username: json['username'] as String? ?? '',
+      username: usernameVal,
       email: json['email'] as String? ?? '',
       role: json['role'] as String? ?? 'resident',
-      floor: json['floor'] is int ? json['floor'] as int : 1,
-      allowedFloors: (json['allowed_floors'] as List<dynamic>?)
-              ?.map((e) => e is int ? e : int.tryParse(e.toString()) ?? 1)
-              .toList() ??
-          [1],
-      token: json['token'] as String? ?? '',
-      expiresIn: json['expires_in'] is int ? json['expires_in'] as int : 43200,
+      floor: parsedFloor,
+      allowedFloors: parsedAllowedFloors.isNotEmpty ? parsedAllowedFloors : [parsedFloor],
+      token: rawToken.toString(),
+      expiresIn: json['expires_in'] is int
+          ? json['expires_in'] as int
+          : int.tryParse(json['expires_in']?.toString() ?? '') ?? 43200,
     );
   }
 
