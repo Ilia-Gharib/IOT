@@ -216,6 +216,15 @@ def execute_home_assistant_service(
             timeout=5,
             allow_redirects=False,
         )
+    except requests.exceptions.Timeout as exc:
+        logger.error(f"Home Assistant timeout on Floor {cmd.floor} ({base_url}): {exc}")
+        raise HAServiceError(
+            detail=f"پاسخی از سیستم هوشمند طبقه {cmd.floor} دریافت نشد (پایان مهلت زمانی ارتباط).",
+            status_code=504,
+            error_code="HA_TIMEOUT",
+            floor=cmd.floor,
+            floor_port=floor_port,
+        ) from exc
     except requests.exceptions.RequestException as exc:
         logger.error(f"Home Assistant unreachable on Floor {cmd.floor} ({base_url}): {exc}")
         raise HAServiceError(

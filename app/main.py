@@ -1,17 +1,42 @@
+import os
+
+# Ensure CUDA DLLs (e.g. cublas64_12.dll from Ollama or CUDA toolkit) are found by ctranslate2 / Faster-Whisper
+def _ensure_cuda_dlls() -> None:
+    cuda_candidates = [
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\lib\ollama\cuda_v12"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\lib\ollama\cuda_v11"),
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4\bin",
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2\bin",
+    ]
+    for p in cuda_candidates:
+        if os.path.isdir(p):
+            try:
+                os.add_dll_directory(p)
+            except Exception:
+                pass
+            if p not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = p + os.pathsep + os.environ.get("PATH", "")
+
+_ensure_cuda_dlls()
+
+# Force offline mode for Hugging Face and Transformers if models already cached
+# os.environ["HF_HUB_OFFLINE"] = "1"
+# os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
 import asyncio
 import hashlib
 import inspect
 import json
 import logging
 import math
-import os
 import re
 import secrets
 import shutil
 import tempfile
 import threading
+import time
 import wave
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -22,7 +47,6 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-import edge_tts
 import ollama
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -50,6 +74,7 @@ try:
         detect_explicit_floors,
         ensure_users_file,
         format_floor_forbidden_detail,
+        get_user_by_email,
         get_user_registry,
         list_users_public,
         record_login_failure,
@@ -89,6 +114,7 @@ except ImportError:
             detect_explicit_floors,
             ensure_users_file,
             format_floor_forbidden_detail,
+            get_user_by_email,
             get_user_registry,
             list_users_public,
             record_login_failure,
@@ -127,6 +153,7 @@ except ImportError:
             detect_explicit_floors,
             ensure_users_file,
             format_floor_forbidden_detail,
+            get_user_by_email,
             get_user_registry,
             list_users_public,
             record_login_failure,
@@ -163,20 +190,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger("SmartBuildingVoiceGateway")
 
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base").strip() or "base"
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "large-v3-turbo").strip() or "large-v3-turbo"
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:4b").strip() or "qwen3.5:4b"
 OLLAMA_FALLBACK_ENABLED = os.getenv("OLLAMA_FALLBACK_ENABLED", "false").strip().lower() == "true"
 OLLAMA_LIST_TIMEOUT = float(os.getenv("OLLAMA_LIST_TIMEOUT", "5.0"))
 OLLAMA_CHAT_TIMEOUT = float(os.getenv("OLLAMA_CHAT_TIMEOUT", "60.0"))
 
-TTS_VOICE = os.getenv("TTS_VOICE", "fa-IR-DilaraNeural").strip() or "fa-IR-DilaraNeural"
+TTS_VOICE = os.getenv("TTS_VOICE", "fa_IR-amir-medium").strip() or "fa_IR-amir-medium"
 TTS_TIMEOUT_SECONDS = float(os.getenv("TTS_TIMEOUT_SECONDS", "12.0"))
 PIPER_MODEL_NAME = os.getenv("PIPER_MODEL_NAME", "fa_IR-amir-medium").strip() or "fa_IR-amir-medium"
 PIPER_MODELS_DIR = Path(os.getenv("PIPER_MODELS_DIR", str(BASE_DIR / "storage" / "models")))
 TTS_CACHE_DIR = Path(os.getenv("TTS_CACHE_DIR", str(BASE_DIR / "storage" / "cache")))
 
 TTS_UNAVAILABLE_MESSAGE = (
-    "پاسخ متنی آماده است؛ تولید صدای پاسخ با سرویس آنلاین و موتور آفلاین در دسترس نبود."
+    "پاسخ متنی آماده است؛ موتور صوتی آفلاین محلی در دسترس نبود."
 )
 
 MAX_AUDIO_UPLOAD_BYTES = int(os.getenv("MAX_AUDIO_UPLOAD_BYTES", str(10 * 1024 * 1024)))
@@ -222,11 +249,40 @@ MAX_AUDIO_OWNER_ENTRIES = max(MAX_CACHED_TTS_FILES * 4, 200)
 _AUDIO_OWNER_BY_ID: "OrderedDict[str, str]" = OrderedDict()
 _audio_owner_lock = threading.Lock()
 
+# ---------------------------------------------------------------------------
+# Pending Events Queue (Two-Phase / Event-Driven Architecture)
+# ---------------------------------------------------------------------------
+PENDING_EVENTS: Dict[str, deque] = {}
+_pending_events_lock = threading.Lock()
+
+
+def add_pending_event(username: str, event: Dict[str, Any]) -> None:
+    with _pending_events_lock:
+        if username not in PENDING_EVENTS:
+            PENDING_EVENTS[username] = deque(maxlen=20)
+        PENDING_EVENTS[username].append(event)
+
+
+def pop_pending_event(username: str) -> Optional[Dict[str, Any]]:
+    with _pending_events_lock:
+        queue = PENDING_EVENTS.get(username)
+        if queue and len(queue) > 0:
+            return queue.popleft()
+    return None
+
+
+def peek_all_pending_events(username: str) -> List[Dict[str, Any]]:
+    with _pending_events_lock:
+        queue = PENDING_EVENTS.get(username)
+        if queue:
+            return list(queue)
+    return []
+
 whisper_model: Optional[WhisperModel] = None
 whisper_lock = threading.Lock()
 
 piper_voice: Optional[Any] = None
-piper_lock = threading.Lock()
+piper_lock = threading.RLock()
 _piper_load_attempted = False
 
 _DEFAULT_OLLAMA_LIST = ollama.list
@@ -308,8 +364,8 @@ def _apply_security_headers(response: Response) -> Response:
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "img-src 'self' data:; "
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-            "font-src 'self' https://cdn.jsdelivr.net data:; "
+            "style-src 'self' 'unsafe-inline'; "
+            "font-src 'self' data:; "
             "script-src 'self' 'unsafe-inline'; "
             "media-src 'self' blob:; "
             "connect-src 'self'; "
@@ -324,6 +380,36 @@ def _apply_security_headers(response: Response) -> Response:
 # ---------------------------------------------------------------------------
 # STT (Faster-Whisper)
 # ---------------------------------------------------------------------------
+def _resolve_whisper_model_source() -> str:
+    """Finds cached weights on disk to avoid blocking network checks, or falls back to model ID."""
+    try:
+        hub_dir = Path.home() / ".cache" / "huggingface" / "hub"
+        candidates = [
+            hub_dir / f"models--mobiuslabsgmbh--faster-whisper-{WHISPER_MODEL_SIZE}",
+            hub_dir / f"models--Systran--faster-whisper-{WHISPER_MODEL_SIZE}",
+            hub_dir / f"models--dropbox-dash--faster-whisper-{WHISPER_MODEL_SIZE}",
+        ]
+        for candidate in candidates:
+            snapshots_dir = candidate / "snapshots"
+            if snapshots_dir.is_dir():
+                for snapshot in snapshots_dir.iterdir():
+                    model_bin = snapshot / "model.bin"
+                    if model_bin.is_file() and model_bin.stat().st_size > 100_000_000:
+                        logger.info(
+                            f"Verified complete Whisper model cache at {model_bin.parent} "
+                            f"({model_bin.stat().st_size / (1024*1024):.1f} MB). Loading directly without remote checks."
+                        )
+                        return str(snapshot)
+    except Exception as exc:
+        logger.debug(f"Cache resolution error: {exc}")
+
+    logger.info(
+        f"Local cache for '{WHISPER_MODEL_SIZE}' not found or incomplete. "
+        "Will download via huggingface_hub with progress logging..."
+    )
+    return WHISPER_MODEL_SIZE
+
+
 def _is_cuda_runtime_error(exc: Exception) -> bool:
     msg = str(exc).lower()
     return any(
@@ -338,6 +424,7 @@ def _run_whisper_transcribe(model: WhisperModel, audio_path: Path) -> str:
         language="fa",
         beam_size=5,
         vad_filter=True,
+        initial_prompt="سلام، این یک گفت‌وگوی فارسی برای دستیار صوتی هوشمند آوا است.",
         vad_parameters=dict(min_silence_duration_ms=400),
     )
     transcript = " ".join(segment.text.strip() for segment in segments).strip()
@@ -366,7 +453,11 @@ def transcribe_persian_audio(audio_path: Path) -> str:
             try:
                 with whisper_lock:
                     if whisper_model is current_model or whisper_model is None:
-                        whisper_model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
+                        whisper_model = WhisperModel(
+                            _resolve_whisper_model_source(),
+                            device="cpu",
+                            compute_type="int8",
+                        )
                     retry_model = whisper_model
                 return _run_whisper_transcribe(retry_model, audio_path)
             except Exception as retry_exc:
@@ -388,38 +479,51 @@ def transcribe_persian_audio(audio_path: Path) -> str:
 # ---------------------------------------------------------------------------
 # LLM Reasoning (Ollama - qwen3.5:4b)
 # ---------------------------------------------------------------------------
-def _build_system_prompt(default_floor: int = 1) -> str:
+def _sanitize_chat_reply(text: str) -> str:
+    if not text:
+        return "سلام! روزتون بخیر."
+    cliche_regexes = [
+        r"[\s،,-]*چطور\s*(?:می‌?تونم|می‌?توانم)\s*(?:بهتون|به\s*شما|کمکتون|کمکتان)?\s*(?:کمک\s*کنم|کمکی\s*بکنم|کمکتون\s*کنم|کمکتان\s*کنم)\s*[؟?]*",
+        r"[\s،,-]*چطور\s*(?:کمکتون|کمکتان)\s*کنم\s*[؟?]*",
+        r"[\s،,-]*در\s*خدمتم\s*[.!؟?]*",
+        r"[\s،,-]*در\s*خدمت\s*(?:شما\s*هستم|تون\s*هستم|تان\s*هستم)\s*[.!؟?]*",
+        r"[\s،,-]*چه\s*کمکی\s*(?:از\s*دستم|از\s*دست\s*من|می‌تونم|می‌توانم)\s*(?:برمی‌آید|برمیاد|انجام\s*بدم)?\s*[؟?]*",
+        r"[\s،,-]*امری\s*(?:داشتی|داشتید|بفرمایید)\s*[.!؟?]*",
+        r"[\s،,-]*امر\s*بفرمایید\s*[.!؟?]*",
+    ]
+    cleaned = text
+    for pat in cliche_regexes:
+        cleaned = re.sub(pat, "", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip(" ،,-.!?؟")
+    if not cleaned:
+        original_stripped = text.strip()
+        return original_stripped if original_stripped else "سلام!"
+    return cleaned
+
+
+def _build_system_prompt(default_floor: int = 1, pending_context: Optional[str] = None) -> str:
     effective_default = 2 if default_floor == 2 else 1
-    floor_label_fa = "طبقه دوم" if effective_default == 2 else "طبقه اول"
-    return f"""You are an AI IoT Orchestrator for a two-floor smart building.
-Your job is to parse Persian voice commands into a strict JSON object for Home Assistant.
-
-### Available Entities Reference (Examples):
-- Floor 1 & 2 Lights (`domain`: "light"):
-  * `light.living_room` (چراغ پذیرایی / سالن)
-  * `light.kitchen` (چراغ آشپزخانه)
-  * `light.bedroom` (چراغ اتاق خواب)
-  * `light.hallway` (چراغ راهرو)
-- Floor 1 & 2 Switches (`domain`: "switch"):
-  * `switch.fridge_express_freeze` (انجماد سریع یخچال)
-  * `switch.water_heater` (آبگرمکن / پکیج)
-  * `switch.coffee_maker` (قهوه‌ساز)
-- Floor 1 & 2 Climate (`domain`: "climate"):
-  * `climate.main_thermostat` (کولر / سیستم تهویه / ترموستات)
-
-### Output Rules:
-1. Respond ONLY with a valid JSON object matching this exact structure:
-{{
-  "floor": 1, 2, or null (int or null; set to 1 ONLY if Floor 1 / طبقه اول is explicitly mentioned, set to 2 ONLY if Floor 2 / طبقه دوم is explicitly mentioned, otherwise use null or {effective_default}),
-  "domain": "light" | "switch" | "climate" | "cover" | "fan",
-  "service": "turn_on" | "turn_off" | "set_temperature" | "toggle",
-  "entity_id": "<domain>.<object_id>",
-  "service_data": {{}} (optional dict, e.g. {{"temperature": 24}} if service is "set_temperature"),
-  "ack_message": "Natural Persian immediate acknowledgment (e.g., در حال روشن کردن چراغ پذیرایی {floor_label_fa}...)",
-  "success_message": "Natural, polite Persian confirmation to be read aloud after execution (e.g., چراغ پذیرایی در {floor_label_fa} با موفقیت روشن شد.)"
-}}
-2. Do not wrap the JSON in markdown blocks or add any extra commentary.
-"""
+    ctx = f" (نتیجه اقدام قبلی: {pending_context.strip()})" if pending_context and pending_context.strip() else ""
+    return (
+        f"تو «آوا» (Ava) هستی؛ دستیار صوتی هوشمند، سریع، صمیمی و دقیق خانه هوشمند (طبقه پیش‌فرض: {effective_default}){ctx}.\n"
+        "وظیفه اصلی تو کنترل تجهیزات خانه هوشمند و همراهی صمیمانه با ساکنان خانه است.\n\n"
+        "### قوانین الزامی تشخیص قصد (Intent):\n"
+        "1. **کنترل تجهیزات (iot_action)**: هرگونه دستور مستقیم، تمایل یا اشاره غیرمستقیم کاربر به تغییر وضعیت یا کنترل تجهیزات خانه "
+        "(مانند لامپ و روشنایی، کولر و گرمایش و تنظیم دما، پرده‌ها، پریزها، فن و لوازم برقی) باید بدون استثنا به صورت «iot_action» پردازش شود. "
+        "حتی اگر کاربر غیرمستقیم صحبت کرد (مثلاً «خیلی تاریکه»، «هوا گرمه»، «می‌خوام بخوابم»، «صدای تلویزیون زیاده»، «سردم شد»)، آن را معادل تغییر وضعیت تجهیزات مربوطه در نظر بگیر و هرگز به مکالمه عادی نبر!\n"
+        f"قالب خروجی iot_action: {{\"intent\": \"iot_action\", \"initial_reply\": \"تایید صوتی گرم، کوتاه و محاوره‌ای به زبان فارسی\", \"ha_action\": {{\"domain\": \"light|switch|climate|cover|fan\", \"service\": \"turn_on|turn_off|open_cover|close_cover|set_temperature\", \"entity_id\": \"domain.device_name\", \"floor\": {effective_default}, \"data\": {{}}}}}}\n\n"
+        "2. **گفت‌وگوی روزمره (chat)**: صرفاً زمانی که کاربر سلام و احوال‌پرسی می‌کند، درباره خودت می‌پرسد یا گپ صمیمانه می‌زند و هیچ درخواستی برای تجهیزات خانه ندارد.\n"
+        "قالب خروجی chat: {\"intent\": \"chat\", \"reply\": \"پاسخ کوتاه، مهربان و محاوره‌ای به فارسی\"}\n\n"
+        "### مثال‌های الگو (Few-Shot Examples):\n"
+        f"- کاربر: \"چراغ سالن رو روشن کن\" -> {{\"intent\": \"iot_action\", \"initial_reply\": \"چشم، چراغ سالن روشن شد.\", \"ha_action\": {{\"domain\": \"light\", \"service\": \"turn_on\", \"entity_id\": \"light.living_room\", \"floor\": {effective_default}}}}}\n"
+        f"- کاربر: \"اینجا خیلی تاریکه هیچی پیدا نیست\" -> {{\"intent\": \"iot_action\", \"initial_reply\": \"حتماً، الان چراغ‌ها رو برات روشن می‌کنم.\", \"ha_action\": {{\"domain\": \"light\", \"service\": \"turn_on\", \"entity_id\": \"light.living_room\", \"floor\": {effective_default}}}}}\n"
+        f"- کاربر: \"کولر رو خاموش کن سردم شد\" -> {{\"intent\": \"iot_action\", \"initial_reply\": \"چشم، کولر خاموش شد.\", \"ha_action\": {{\"domain\": \"climate\", \"service\": \"turn_off\", \"entity_id\": \"climate.ac\", \"floor\": {effective_default}}}}}\n"
+        f"- کاربر: \"خیلی گرمه دما رو بذار روی ۲۲\" -> {{\"intent\": \"iot_action\", \"initial_reply\": \"حتماً، دما رو روی ۲۲ درجه گذاشتم.\", \"ha_action\": {{\"domain\": \"climate\", \"service\": \"set_temperature\", \"entity_id\": \"climate.thermostat\", \"floor\": {effective_default}, \"data\": {{\"temperature\": 22}}}}}}\n"
+        f"- کاربر: \"پرده‌ها رو بکش آفتاب چشمم رو می‌زنه\" -> {{\"intent\": \"iot_action\", \"initial_reply\": \"چشم، پرده‌ها رو بستم.\", \"ha_action\": {{\"domain\": \"cover\", \"service\": \"close_cover\", \"entity_id\": \"cover.living_room\", \"floor\": {effective_default}}}}}\n"
+        f"- کاربر: \"پریز برق قهوه‌ساز رو قطع کن\" -> {{\"intent\": \"iot_action\", \"initial_reply\": \"چشم، پریز قهوه‌ساز خاموش شد.\", \"ha_action\": {{\"domain\": \"switch\", \"service\": \"turn_off\", \"entity_id\": \"switch.coffee_maker\", \"floor\": {effective_default}}}}}\n"
+        f"- کاربر: \"سلام آوا روزت بخیر چطوری؟\" -> {{\"intent\": \"chat\", \"reply\": \"سلام عزیزم! من عالی‌ام، در خدمتم هر کاری داشتی بگو.\"}}\n\n"
+        "قانون خروجی: فقط و فقط یک آبجکت معتبر JSON خروجی بده بدون هیچ توضیح یا متن اضافه."
+    )
 
 
 def _close_ollama_client(client: Any) -> None:
@@ -485,18 +589,26 @@ def _supports_think_kwarg(fn: Any) -> bool:
     )
 
 
-def _call_ollama_chat(**kwargs: Any) -> Any:
+def _call_ollama(**kwargs: Any) -> Any:
     def _invoke(chat_fn: Any) -> Any:
         call_kwargs = dict(kwargs)
-        injected_think = False
-        if "think" not in call_kwargs and _supports_think_kwarg(chat_fn):
-            call_kwargs["think"] = False
-            injected_think = True
+        # Ensure "think": False is strictly top-level in the payload, never inside options
+        if isinstance(call_kwargs.get("options"), dict):
+            call_kwargs["options"].pop("think", None)
+        call_kwargs["think"] = False
+
+        if "keep_alive" not in call_kwargs:
+            call_kwargs["keep_alive"] = "24h"
+        elif call_kwargs.get("keep_alive") == "-1":
+            call_kwargs["keep_alive"] = -1
         try:
+            return chat_fn(**call_kwargs)
+        except TypeError:
+            call_kwargs.pop("think", None)
             return chat_fn(**call_kwargs)
         except ollama.ResponseError as exc:
             err_text = f"{exc} {getattr(exc, 'error', '')}".lower()
-            if injected_think and "think" in err_text:
+            if "think" in err_text:
                 call_kwargs.pop("think", None)
                 return chat_fn(**call_kwargs)
             raise
@@ -508,6 +620,9 @@ def _call_ollama_chat(**kwargs: Any) -> Any:
         return _invoke(client.chat)
     finally:
         _close_ollama_client(client)
+
+
+_call_ollama_chat = _call_ollama
 
 
 def _is_ollama_connection_error(exc: Exception) -> bool:
@@ -584,6 +699,15 @@ def _is_unspecified_floor(raw_floor: Any) -> bool:
 
 
 def _select_preferred_command_dict(candidates: List[Dict[str, Any]], default_floor: int = 1) -> Dict[str, Any]:
+    # Check for intent-based or conversational candidates
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            if candidate.get("intent") in ("chat", "iot_action"):
+                return candidate
+            if candidate.get("type") == "conversation" or "reply" in candidate:
+                if candidate.get("reply"):
+                    return candidate
+
     command_keys = {"domain", "service", "entity_id"}
     valid_candidates: List[Tuple[Dict[str, Any], Optional[int]]] = []
     for candidate in candidates:
@@ -659,9 +783,13 @@ def extract_json_from_llm(raw_content: str, default_floor: int = 1) -> Dict[str,
     raise ValueError("No valid JSON object found in LLM output.")
 
 
-def reason_with_qwen(transcript: str, default_floor: int = 1) -> LLMCommandSchema:
+def reason_with_qwen(
+    transcript: str,
+    default_floor: int = 1,
+    pending_context: Optional[str] = None,
+) -> Dict[str, Any]:
     effective_default = 2 if default_floor == 2 else 1
-    system_prompt = _build_system_prompt(default_floor=effective_default)
+    system_prompt = _build_system_prompt(default_floor=effective_default, pending_context=pending_context)
 
     try:
         list_response = _call_ollama_list()
@@ -689,15 +817,25 @@ def reason_with_qwen(transcript: str, default_floor: int = 1) -> LLMCommandSchem
             available_models=available_models,
         )
 
+    user_prompt = transcript.strip()
+    if not user_prompt.endswith("/no_think"):
+        user_prompt = f"{user_prompt} /no_think"
+
     logger.info(f"Querying Ollama model '{active_model}' (default_floor={effective_default})...")
     try:
-        response = _call_ollama_chat(
+        response = _call_ollama(
             model=active_model,
             format="json",
-            options={"temperature": 0.1},
+            keep_alive="24h",
+            think=False,
+            options={
+                "temperature": 0.6,
+                "num_ctx": 2048,
+                "num_predict": 128,
+            },
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": transcript},
+                {"role": "user", "content": user_prompt},
             ],
         )
     except ollama.ResponseError as exc:
@@ -743,14 +881,76 @@ def reason_with_qwen(transcript: str, default_floor: int = 1) -> LLMCommandSchem
 
     try:
         parsed_dict = extract_json_from_llm(raw_content, default_floor=effective_default)
-        parsed_dict["floor"] = _normalize_floor(parsed_dict.get("floor"), default_floor=effective_default)
-        command = LLMCommandSchema(**parsed_dict)
+        intent = parsed_dict.get("intent")
+
+        # 1. Chat Branch (greetings, general chat, or reply-only)
+        if (
+            intent == "chat"
+            or parsed_dict.get("type") == "conversation"
+            or ("reply" in parsed_dict and "ha_action" not in parsed_dict and "domain" not in parsed_dict)
+        ):
+            raw_reply = str(
+                parsed_dict.get("reply") or parsed_dict.get("initial_reply") or ""
+            ).strip()
+            reply_text = _sanitize_chat_reply(raw_reply) if raw_reply else "سلام!"
+            return {
+                "intent": "chat",
+                "reply": reply_text,
+                "model_used": active_model,
+            }
+
+        # 2. IoT Action Branch
+        ha_payload = parsed_dict.get("ha_action")
+        if not isinstance(ha_payload, dict):
+            ha_payload = parsed_dict
+
+        floor_val = _normalize_floor(ha_payload.get("floor"), default_floor=effective_default)
+        domain_val = str(ha_payload.get("domain") or "light").strip()
+        service_val = str(ha_payload.get("service") or "turn_on").strip()
+        entity_id_val = str(ha_payload.get("entity_id") or f"{domain_val}.living_room").strip()
+        data_val = ha_payload.get("data") if "data" in ha_payload else ha_payload.get("service_data", {})
+        if not isinstance(data_val, dict):
+            data_val = {}
+
+        initial_reply_text = str(
+            parsed_dict.get("initial_reply")
+            or parsed_dict.get("ack_message")
+            or "چشم، الان تنظیمش می‌کنم."
+        ).strip()
+
+        success_msg_text = str(
+            parsed_dict.get("success_message")
+            or f"{entity_id_val} تنظیم شد."
+        ).strip()
+
+        command = LLMCommandSchema(
+            floor=floor_val,
+            domain=domain_val,
+            service=service_val,
+            entity_id=entity_id_val,
+            service_data=data_val,
+            ack_message=initial_reply_text,
+            success_message=success_msg_text,
+        )
         command._model_used = active_model
-        return command
+
+        return {
+            "intent": "iot_action",
+            "initial_reply": initial_reply_text,
+            "command_data": command,
+            "ha_action": {
+                "floor": floor_val,
+                "domain": domain_val,
+                "service": service_val,
+                "entity_id": entity_id_val,
+                "data": data_val,
+            },
+            "model_used": active_model,
+        }
     except (ValueError, json.JSONDecodeError, ValidationError, TypeError) as parse_exc:
         logger.exception(f"Failed to parse LLM JSON output ({active_model}): {parse_exc}")
         raise OllamaServiceError(
-            detail=f"خروجی مدل زبانی ({active_model}) ساختار معتبر JSON فرمان خانه هوشمند نداشت.",
+            detail=f"خروجی مدل زبانی ({active_model}) ساختار معتبر JSON نداشت.",
             status_code=502,
             error_code="LLM_INVALID_JSON",
             ollama_running=True,
@@ -759,8 +959,105 @@ def reason_with_qwen(transcript: str, default_floor: int = 1) -> LLMCommandSchem
         ) from parse_exc
 
 
+def _format_ha_success_report(command_data: LLMCommandSchema, ha_result: Dict[str, Any]) -> str:
+    domain = command_data.domain
+    service = command_data.service
+    entity = command_data.entity_id
+    floor = command_data.floor
+    floor_str = f"طبقه {floor}"
+
+    name_map = {
+        "light.living_room": "چراغ پذیرایی",
+        "light.kitchen": "چراغ آشپزخانه",
+        "light.bedroom": "چراغ اتاق خواب",
+        "light.hallway": "چراغ راهرو",
+        "switch.fridge_express_freeze": "انجماد سریع یخچال",
+        "switch.water_heater": "پکیج آبگرمکن",
+        "switch.coffee_maker": "قهوه‌ساز",
+        "climate.main_thermostat": "ترموستات",
+    }
+    entity_fa = name_map.get(entity, entity.split(".")[-1].replace("_", " "))
+
+    if service in ("turn_on", "on"):
+        return f"{entity_fa} {floor_str} روشن شد."
+    if service in ("turn_off", "off"):
+        return f"{entity_fa} {floor_str} خاموش شد."
+    if service in ("toggle",):
+        return f"وضعیت {entity_fa} {floor_str} تغییر کرد."
+    if service in ("set_temperature",):
+        temp = (command_data.service_data or {}).get("temperature")
+        if temp is not None:
+            return f"دمای {entity_fa} روی {temp} تنظیم شد."
+        return f"دمای {entity_fa} {floor_str} تنظیم شد."
+
+    if command_data.success_message and len(command_data.success_message.split()) <= 10:
+        return command_data.success_message
+    return f"فرمان {entity_fa} {floor_str} با موفقیت اجرا شد."
+
+
+async def _run_ha_background_action(
+    username: str,
+    command_data: LLMCommandSchema,
+    allowed_floors: Set[int],
+) -> None:
+    try:
+        ha_result = await asyncio.to_thread(
+            execute_home_assistant_service, command_data, allowed_floors
+        )
+        report_msg = _format_ha_success_report(command_data, ha_result)
+        add_pending_event(
+            username,
+            {
+                "status": "success",
+                "message": report_msg,
+                "entity_id": command_data.entity_id,
+                "floor": command_data.floor,
+                "timestamp": time.time(),
+            },
+        )
+        logger.info(f"Background HA action completed for '{username}': {report_msg}")
+    except PermissionError:
+        err_msg = f"دسترسی به طبقه {command_data.floor} مجاز نیست."
+        add_pending_event(
+            username,
+            {
+                "status": "error",
+                "message": err_msg,
+                "entity_id": command_data.entity_id,
+                "floor": command_data.floor,
+                "timestamp": time.time(),
+            },
+        )
+    except HAServiceError as ha_err:
+        short_err = f"خطا در طبقه {command_data.floor}: {ha_err.detail}"
+        if len(short_err.split()) > 10:
+            short_err = f"خطا در ارتباط با طبقه {command_data.floor}."
+        add_pending_event(
+            username,
+            {
+                "status": "error",
+                "message": short_err,
+                "entity_id": command_data.entity_id,
+                "floor": command_data.floor,
+                "timestamp": time.time(),
+            },
+        )
+    except Exception as exc:
+        logger.exception(f"Unexpected background HA error for '{username}': {exc}")
+        add_pending_event(
+            username,
+            {
+                "status": "error",
+                "message": "خطای غیرمنتظره در ارتباط با دستگاه.",
+                "entity_id": command_data.entity_id,
+                "floor": command_data.floor,
+                "timestamp": time.time(),
+            },
+        )
+
+
 # ---------------------------------------------------------------------------
-# Hybrid TTS (Edge-TTS Primary + Local Piper TTS Fallback + Disk Pre-Cache)
+# 100% Offline Local Piper TTS Engine & Disk Pre-Cache
 # ---------------------------------------------------------------------------
 def _find_piper_model_files() -> Optional[Tuple[Path, Path]]:
     """Finds local Piper ONNX model and JSON config under PIPER_MODELS_DIR."""
@@ -794,7 +1091,7 @@ def _get_piper_voice() -> Optional[Any]:
         if model_files is None:
             logger.warning(
                 f"Local Piper model '{PIPER_MODEL_NAME}' not found in '{PIPER_MODELS_DIR}'. "
-                "Offline Piper fallback will remain standby until .onnx + .onnx.json files are present."
+                "Offline Piper voice will remain standby until .onnx + .onnx.json files are present."
             )
             return None
         onnx_path, json_path = model_files
@@ -811,17 +1108,23 @@ def _get_piper_voice() -> Optional[Any]:
 def _synthesize_with_piper_sync(text: str, wav_output_path: Path) -> bool:
     voice = _get_piper_voice()
     if voice is None:
+        logger.error("Piper voice is unavailable; cannot synthesize speech.")
         return False
     wav_output_path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(wav_output_path), "wb") as wav_file:
-        voice.synthesize_wav(text, wav_file)
-    return wav_output_path.exists() and wav_output_path.stat().st_size > 44
+    try:
+        with piper_lock:
+            with wave.open(str(wav_output_path), "wb") as wav_file:
+                voice.synthesize_wav(text, wav_file)
+        return wav_output_path.exists() and wav_output_path.stat().st_size > 44
+    except Exception as exc:
+        logger.exception(f"Error during Piper speech synthesis: {exc}")
+        return False
 
 
 def _get_cached_phrase_path(text: str) -> Optional[Path]:
-    """Returns a cached .mp3 or .wav file from TTS_CACHE_DIR if text matches a pre-cached phrase."""
+    """Returns a cached .wav or .mp3 file from TTS_CACHE_DIR if text matches a pre-cached phrase."""
     text_hash = hashlib.sha256(text.strip().encode("utf-8")).hexdigest()[:24]
-    for ext in (".mp3", ".wav"):
+    for ext in (".wav", ".mp3"):
         candidate = TTS_CACHE_DIR / f"err_{text_hash}{ext}"
         if candidate.exists() and candidate.stat().st_size > 44:
             return candidate
@@ -844,7 +1147,7 @@ def _get_audio_owner(response_id: str) -> Optional[str]:
 
 def _get_user_latest_audio_paths(username: str) -> Tuple[Path, Path]:
     safe_user = re.sub(r"[^a-zA-Z0-9_-]", "_", username or "unknown")
-    return TEMP_AUDIO_DIR / f"latest_response_{safe_user}.mp3", TEMP_AUDIO_DIR / f"latest_response_{safe_user}.wav"
+    return TEMP_AUDIO_DIR / f"latest_response_{safe_user}.wav", TEMP_AUDIO_DIR / f"latest_response_{safe_user}.mp3"
 
 
 def _update_latest_audio_atomically(source_path: Path, target_path: Path) -> None:
@@ -865,7 +1168,7 @@ def _prune_old_tts_files(keep_count: int = MAX_CACHED_TTS_FILES) -> None:
         return
     limit = max(0, keep_count)
     files_with_mtime: List[Tuple[int, Path]] = []
-    for pattern in ("response_*.mp3", "response_*.wav"):
+    for pattern in ("response_*.wav", "response_*.mp3"):
         for path in TEMP_AUDIO_DIR.glob(pattern):
             try:
                 files_with_mtime.append((path.stat().st_mtime_ns, path))
@@ -886,7 +1189,7 @@ def _prune_old_tts_files(keep_count: int = MAX_CACHED_TTS_FILES) -> None:
 
 def _format_tts_error_label(exc: Exception) -> str:
     if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
-        return "Edge-TTS timeout"
+        return "TTS timeout"
     return f"TTS error ({type(exc).__name__})"
 
 
@@ -896,23 +1199,22 @@ async def synthesize_persian_tts(
     allow_cache_hit: bool = True,
 ) -> Dict[str, Any]:
     """
-    Hybrid Persian TTS:
-    1. Instant disk cache hit for pre-cached common phrases.
-    2. Primary: Edge-TTS -> .mp3
-    3. Zero-crash offline fallback: Local Piper TTS (fa_IR-amir-medium) -> .wav
+    100% Offline Local Persian TTS using Piper (fa_IR-amir-medium).
+    1. Instant disk cache hit for pre-cached common phrases (.wav).
+    2. Direct local synthesis using Piper TTS -> .wav
     """
     cleaned_text = (text or "").strip()
     if not cleaned_text:
         return {
             "ok": False,
             "engine": "none",
-            "voice": TTS_VOICE,
+            "voice": PIPER_MODEL_NAME,
             "path": None,
             "fallback_message": TTS_UNAVAILABLE_MESSAGE,
             "error": "Empty TTS input text",
         }
 
-    # 1. Check pre-cached disk audio
+    # 1. Check pre-cached disk audio (.wav or .mp3)
     if allow_cache_hit:
         cached = _get_cached_phrase_path(cleaned_text)
         if cached is not None:
@@ -927,31 +1229,7 @@ async def synthesize_persian_tts(
                 "error": None,
             }
 
-    # 2. Primary: Edge-TTS (.mp3)
-    mp3_path = output_stem_path.with_suffix(".mp3")
-    edge_error_label: Optional[str] = None
-    try:
-        communicate = edge_tts.Communicate(text=cleaned_text, voice=TTS_VOICE)
-        await asyncio.wait_for(communicate.save(str(mp3_path)), timeout=TTS_TIMEOUT_SECONDS)
-        if mp3_path.exists() and mp3_path.stat().st_size > 0:
-            return {
-                "ok": True,
-                "engine": "edge-tts",
-                "voice": TTS_VOICE,
-                "path": mp3_path,
-                "fallback_message": None,
-                "error": None,
-            }
-        raise RuntimeError("Edge-TTS produced an empty file.")
-    except Exception as edge_exc:
-        edge_error_label = _format_tts_error_label(edge_exc)
-        logger.warning(f"Edge-TTS failed ({edge_exc}); engaging local Piper TTS fallback...")
-        try:
-            mp3_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-    # 3. Offline Fallback: Local Piper TTS (.wav)
+    # 2. 100% Offline Local Piper TTS (.wav)
     wav_path = output_stem_path.with_suffix(".wav")
     try:
         piper_ok = await asyncio.to_thread(_synthesize_with_piper_sync, cleaned_text, wav_path)
@@ -964,8 +1242,9 @@ async def synthesize_persian_tts(
                 "fallback_message": None,
                 "error": None,
             }
+        logger.warning(f"Piper TTS synthesis failed for: {cleaned_text}")
     except Exception as piper_exc:
-        logger.exception(f"Piper offline TTS fallback failed: {piper_exc}")
+        logger.exception(f"Piper offline TTS failed: {piper_exc}")
         try:
             wav_path.unlink(missing_ok=True)
         except OSError:
@@ -977,7 +1256,7 @@ async def synthesize_persian_tts(
         "voice": PIPER_MODEL_NAME,
         "path": None,
         "fallback_message": TTS_UNAVAILABLE_MESSAGE,
-        "error": edge_error_label or "Piper voice unavailable",
+        "error": "Piper voice unavailable or synthesis failed",
     }
 
 
@@ -990,7 +1269,7 @@ async def _prepare_user_audio_response(text: str, username: str) -> Tuple[Option
     out_path: Optional[Path] = tts_result.get("path")
     if tts_result.get("ok") and isinstance(out_path, Path) and out_path.exists() and out_path.stat().st_size > 0:
         _register_audio_owner(response_id, username)
-        mp3_latest, wav_latest = _get_user_latest_audio_paths(username)
+        wav_latest, mp3_latest = _get_user_latest_audio_paths(username)
         target_latest = wav_latest if out_path.suffix.lower() == ".wav" else mp3_latest
         # Remove stale opposite-format latest file so replay always gets the newest response
         opposite_latest = mp3_latest if out_path.suffix.lower() == ".wav" else wav_latest
@@ -1008,25 +1287,40 @@ async def _prepare_user_audio_response(text: str, username: str) -> Tuple[Option
 
 
 async def _prewarm_common_error_tts_cache() -> None:
-    """Pre-caches common Persian error responses on disk (preferring Piper offline, or Edge-TTS)."""
+    """Pre-caches common Persian error responses on disk using 100% offline local Piper TTS."""
     TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     for key, phrase in COMMON_ERROR_TTS_PHRASES.items():
         if _get_cached_phrase_path(phrase) is not None:
             continue
         text_hash = hashlib.sha256(phrase.strip().encode("utf-8")).hexdigest()[:24]
         stem = TTS_CACHE_DIR / f"err_{text_hash}"
-        # Prefer local Piper for instant zero-network pre-caching if available; otherwise use hybrid
         wav_candidate = stem.with_suffix(".wav")
         try:
             piper_ok = await asyncio.to_thread(_synthesize_with_piper_sync, phrase, wav_candidate)
             if piper_ok:
                 logger.info(f"Pre-cached error TTS '{key}' via local Piper -> {wav_candidate.name}")
-                continue
-        except Exception:
-            pass
-        res = await synthesize_persian_tts(phrase, stem, allow_cache_hit=False)
-        if res.get("ok"):
-            logger.info(f"Pre-cached error TTS '{key}' via {res.get('engine')}.")
+        except Exception as exc:
+            logger.warning(f"Failed to pre-cache error TTS '{key}' via Piper: {exc}")
+
+
+async def _warmup_ollama_background() -> None:
+    try:
+        logger.info(f"Warming up Ollama model '{OLLAMA_MODEL}' in background (keep_alive='24h')...")
+        await asyncio.to_thread(
+            _call_ollama,
+            model=OLLAMA_MODEL,
+            messages=[{"role": "user", "content": "سلام /no_think"}],
+            keep_alive="24h",
+            think=False,
+            options={
+                "temperature": 0.6,
+                "num_ctx": 2048,
+                "num_predict": 128,
+            },
+        )
+        logger.info(f"Ollama model '{OLLAMA_MODEL}' warmed up and pinned in memory.")
+    except Exception as exc:
+        logger.warning(f"Ollama warm-up warning (will retry on first request): {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -1038,17 +1332,32 @@ async def lifespan(app: FastAPI):
     ensure_users_file()
     validate_startup_auth_config()
 
-    logger.info(f"Loading Faster-Whisper model ('{WHISPER_MODEL_SIZE}')...")
+    try:
+        import huggingface_hub.utils.logging as hf_logging
+        hf_logging.set_verbosity_info()
+    except Exception:
+        pass
+
+    model_source = _resolve_whisper_model_source()
+    logger.info(f"Loading Faster-Whisper model from source '{model_source}' on GPU (device='cuda', compute_type='int8_float16')...")
     try:
         whisper_model = await asyncio.to_thread(
-            lambda: WhisperModel(WHISPER_MODEL_SIZE, device="auto", compute_type="auto")
+            lambda: WhisperModel(
+                model_source,
+                device="cuda",
+                compute_type="int8_float16",
+            )
         )
-        logger.info("Faster-Whisper loaded successfully.")
+        logger.info(f"Faster-Whisper ('{WHISPER_MODEL_SIZE}') loaded successfully on CUDA (int8_float16).")
     except Exception as exc:
-        logger.warning(f"Auto device Whisper init failed ({exc}); falling back to CPU (int8)...")
+        logger.warning(f"CUDA Whisper initialization failed ({exc}); falling back to CPU (int8)...")
         try:
             whisper_model = await asyncio.to_thread(
-                lambda: WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
+                lambda: WhisperModel(
+                    model_source,
+                    device="cpu",
+                    compute_type="int8",
+                )
             )
             logger.info("Faster-Whisper loaded on CPU.")
         except Exception as cpu_err:
@@ -1058,6 +1367,9 @@ async def lifespan(app: FastAPI):
     # Preload Piper model & pre-cache common error responses in background
     await asyncio.to_thread(_get_piper_voice)
     asyncio.create_task(_prewarm_common_error_tts_cache())
+
+    # Warm-up Ollama model in background so server startup is instantaneous
+    asyncio.create_task(_warmup_ollama_background())
 
     yield
 
@@ -1092,6 +1404,12 @@ async def security_and_error_middleware(request: Request, call_next):
         is_public = request.method == "OPTIONS" or (request.method, normalized_path) in {
             ("GET", "/"),
             ("HEAD", "/"),
+            ("GET", "/api/health"),
+            ("HEAD", "/api/health"),
+            ("GET", "/health"),
+            ("HEAD", "/health"),
+            ("GET", "/api/gateway-info"),
+            ("HEAD", "/api/gateway-info"),
             ("POST", "/api/login"),
             ("POST", "/api/auth/forgot-password"),
             ("POST", "/api/auth/verify-otp"),
@@ -1212,6 +1530,41 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 # ---------------------------------------------------------------------------
 # Public & Auth Endpoints
 # ---------------------------------------------------------------------------
+@app.get("/api/health")
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "service": "smart-building-voice-gateway",
+        "version": "2.0.0",
+        "timestamp": time.time(),
+    }
+
+
+@app.get("/api/gateway-info")
+@app.get("/gateway-info", include_in_schema=False)
+async def get_gateway_info():
+    tunnel_file = BASE_DIR / "scripts" / "tunnel_url.txt"
+    remote_url = ""
+    if tunnel_file.exists():
+        try:
+            content = tunnel_file.read_text(encoding="utf-8").strip()
+            if content.startswith("http://") or content.startswith("https://"):
+                remote_url = content
+        except Exception:
+            pass
+    if not remote_url:
+        remote_url = "https://tribune-baghdad-mandatory-handy.trycloudflare.com"
+
+    return {
+        "remote_url": remote_url,
+        "local_url": "http://192.168.137.1:8000",
+        "service": "smart-building-voice-gateway",
+        "version": "2.0.0",
+        "timestamp": time.time(),
+    }
+
+
 @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def serve_pwa_client():
     index_file = BASE_DIR / "www" / "index.html"
@@ -1235,7 +1588,12 @@ async def login(request: Request, payload: LoginRequest):
         )
 
     registry = await asyncio.to_thread(get_user_registry)
-    user_record = registry.get(payload.username)
+    # Support logging in with username or email (e.g. ilia, floor1_user, floor1@building.local)
+    identifier = payload.username.strip()
+    user_record = registry.get(identifier)
+    if user_record is None:
+        user_record = await asyncio.to_thread(get_user_by_email, identifier)
+
     stored_hash = user_record.password_hash if (user_record is not None and user_record.active) else None
     verified = await asyncio.to_thread(verify_password_pbkdf2, payload.password, stored_hash)
 
@@ -1547,6 +1905,7 @@ async def process_audio(request: Request):
 
         # 1. STT via Faster-Whisper
         current_stage = "stt"
+        transcript = ""
         try:
             transcript = await asyncio.to_thread(transcribe_persian_audio, temp_input_path)
         except STTServiceError as stt_err:
@@ -1557,9 +1916,21 @@ async def process_audio(request: Request):
                 stage="stt",
                 error_code=stt_err.error_code,
                 audio_url=err_audio_url,
+                transcript=transcript or None,
             )
 
+        # Check hands_free mode flag from request form_data
+        raw_hands_free = form_data.get("hands_free") if form_data is not None else None
+        is_hands_free = str(raw_hands_free or "").strip().lower() in ("true", "1", "yes")
+
         if not transcript:
+            if is_hands_free:
+                logger.info("Hands-free audio ignored: empty transcript / background noise.")
+                return JSONResponse(
+                    status_code=200,
+                    content={"status": "ignored", "ignored": True, "reason": "empty_transcript"},
+                    headers=NO_STORE_HEADERS,
+                )
             msg = COMMON_ERROR_TTS_PHRASES["empty_transcript"]
             err_audio_url, _ = await _prepare_user_audio_response(msg, auth_user.username)
             return build_error_response(
@@ -1568,7 +1939,26 @@ async def process_audio(request: Request):
                 stage="stt",
                 error_code="EMPTY_TRANSCRIPT",
                 audio_url=err_audio_url,
+                transcript=None,
             )
+
+        # Hands-free Wake Word / Smart Intent Guard
+        if is_hands_free:
+            transcript_clean = transcript.strip().lower()
+            wake_words = ("آوا", "هی آوا", "سلام آوا", "ایوا", "ava", "hey ava")
+            has_wake_word = any(w in transcript_clean for w in wake_words)
+            iot_indicators = (
+                "روشن", "خاموش", "بزن", "قطع", "وصل", "دما", "کولر", "چراغ",
+                "لامپ", "پرده", "پریز", "اسپلیت", "هواکش", "فن", "قفل", "باز کن", "ببند"
+            )
+            has_iot_intent = any(w in transcript_clean for w in iot_indicators)
+            if not has_wake_word and not has_iot_intent:
+                logger.info(f"Hands-free audio ignored (no wake word or IoT command): '{transcript}'")
+                return JSONResponse(
+                    status_code=200,
+                    content={"status": "ignored", "ignored": True, "transcript": transcript},
+                    headers=NO_STORE_HEADERS,
+                )
 
         # 2. Pre-LLM Floor Guard
         current_stage = "auth"
@@ -1586,12 +1976,22 @@ async def process_audio(request: Request):
                 error_code="FLOOR_FORBIDDEN",
                 audio_url=err_audio_url,
                 headers=NO_STORE_HEADERS,
+                transcript=transcript,
             )
 
-        # 3. Ollama Reasoning (qwen3.5:4b)
+        # 3. Context Injection from Pending Events Queue
+        pending_event = pop_pending_event(auth_user.username)
+        pending_context = None
+        if pending_event:
+            pending_context = str(pending_event.get("message") or "").strip()
+            logger.info(f"Injecting pending context for '{auth_user.username}': {sanitize_for_log(pending_context, 100)}")
+
+        # 4. Ollama Reasoning (qwen3.5:4b) with Intent Routing & Context Injection
         current_stage = "llm"
         try:
-            command_data = await asyncio.to_thread(reason_with_qwen, transcript, auth_user.default_floor)
+            decision = await asyncio.to_thread(
+                reason_with_qwen, transcript, auth_user.default_floor, pending_context
+            )
         except OllamaServiceError as llm_err:
             err_audio_url, _ = await _prepare_user_audio_response(
                 COMMON_ERROR_TTS_PHRASES["ollama_offline"], auth_user.username
@@ -1605,9 +2005,50 @@ async def process_audio(request: Request):
                 requested_model=llm_err.requested_model,
                 available_models=llm_err.available_models,
                 audio_url=err_audio_url,
+                transcript=transcript,
             )
 
-        # 4. Post-LLM Floor Guard
+        intent = decision.get("intent", "chat")
+        model_used = decision.get("model_used") or OLLAMA_MODEL
+
+        # 5. Branch: General Conversation (Chat)
+        if intent == "chat":
+            current_stage = "tts"
+            raw_reply = str(decision.get("reply") or decision.get("initial_reply") or "").strip()
+            reply_text = _sanitize_chat_reply(raw_reply) if raw_reply else "سلام!"
+            audio_url, tts_status = await _prepare_user_audio_response(reply_text, auth_user.username)
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "intent": "chat",
+                    "transcript": transcript,
+                    "reply": reply_text,
+                    "parsed_command": {
+                        "type": "conversation",
+                        "reply": reply_text,
+                        "domain": "conversation",
+                        "service": "reply",
+                        "entity_id": "assistant",
+                        "floor": None,
+                        "service_data": {},
+                        "ack_message": reply_text,
+                        "success_message": reply_text,
+                        "_is_conversation": True,
+                    },
+                    "llm_model": model_used,
+                    "ha_execution": {"ok": True, "type": "chat", "status_code": 200},
+                    "audio_url": audio_url,
+                    "tts_status": tts_status,
+                },
+                headers=NO_STORE_HEADERS,
+            )
+
+        # 6. Branch: Smart Home IoT Action (Two-Phase Parallel Execution)
+        command_data: LLMCommandSchema = decision["command_data"]
+        initial_reply = str(decision.get("initial_reply") or "چشم، الان تنظیمش می‌کنم.").strip()
+
+        # Post-LLM Floor Guard
         current_stage = "auth"
         if command_data.floor not in auth_user.allowed_floors:
             detail_msg = format_floor_forbidden_detail({command_data.floor}, auth_user.allowed_floors)
@@ -1621,47 +2062,36 @@ async def process_audio(request: Request):
                 error_code="FLOOR_FORBIDDEN",
                 audio_url=err_audio_url,
                 headers=NO_STORE_HEADERS,
+                transcript=transcript,
             )
 
-        # 5. Real Home Assistant REST API Dispatch (Honest Error Reporting - No Fake Simulation)
-        current_stage = "ha"
-        try:
-            ha_result = await asyncio.to_thread(
-                execute_home_assistant_service, command_data, set(auth_user.allowed_floors)
-            )
-        except PermissionError:
-            return build_error_response(
-                status_code=403,
-                detail=format_floor_forbidden_detail({command_data.floor}, auth_user.allowed_floors),
-                stage="auth",
-                error_code="FLOOR_FORBIDDEN",
-                headers=NO_STORE_HEADERS,
-            )
-        except HAServiceError as ha_err:
-            err_audio_url, _ = await _prepare_user_audio_response(ha_err.detail, auth_user.username)
-            return build_error_response(
-                status_code=ha_err.status_code,
-                detail=ha_err.detail,
-                stage="ha",
-                error_code=ha_err.error_code,
-                audio_url=err_audio_url,
-                headers=NO_STORE_HEADERS,
-            )
-
-        # 6. Hybrid TTS (Edge-TTS primary + Local Piper fallback)
+        # Immediate Audio Synthesis of initial_reply (<10-12 words)
         current_stage = "tts"
-        audio_url, tts_status = await _prepare_user_audio_response(
-            command_data.success_message, auth_user.username
+        audio_url, tts_status = await _prepare_user_audio_response(initial_reply, auth_user.username)
+
+        # Parallel Async Home Assistant Execution in Background Task
+        asyncio.create_task(
+            _run_ha_background_action(
+                username=auth_user.username,
+                command_data=command_data,
+                allowed_floors=set(auth_user.allowed_floors),
+            )
         )
 
         return JSONResponse(
             status_code=200,
             content={
                 "status": "success",
+                "intent": "iot_action",
                 "transcript": transcript,
+                "initial_reply": initial_reply,
                 "parsed_command": command_data.model_dump(),
-                "llm_model": getattr(command_data, "_model_used", None) or OLLAMA_MODEL,
-                "ha_execution": ha_result,
+                "llm_model": model_used,
+                "ha_execution": {
+                    "ok": True,
+                    "status": "pending",
+                    "message": "فرمان جهت اجرا در پس‌زمینه ارسال شد.",
+                },
                 "audio_url": audio_url,
                 "tts_status": tts_status,
             },
@@ -1675,6 +2105,7 @@ async def process_audio(request: Request):
             stage=auth_err.stage,
             error_code=auth_err.error_code,
             headers=auth_err.headers or NO_STORE_HEADERS,
+            transcript=transcript or None,
         )
     except Exception as exc:
         logger.exception(f"Unexpected error in /process-audio at stage '{current_stage}': {exc}")
@@ -1683,6 +2114,7 @@ async def process_audio(request: Request):
             detail=f"خطای غیرمنتظره در پردازش فرمان صوتی (مرحله {current_stage}).",
             stage=current_stage,
             error_code="PROCESS_AUDIO_INTERNAL_ERROR",
+            transcript=transcript or None,
         )
     finally:
         if audio_obj is not None and _is_upload_file_obj(audio_obj):
@@ -1711,7 +2143,7 @@ async def play_response(
     id: Optional[str] = Query(default=None),
     auth_user: AuthUser = Depends(require_authenticated_user),
 ):
-    """Streams owner-isolated MP3 (Edge-TTS) or WAV (Piper) response back to client."""
+    """Streams owner-isolated WAV (100% offline Piper TTS) or cached audio response back to client."""
     if id is not None:
         if not re.fullmatch(r"[a-fA-F0-9]{1,32}", id):
             return build_error_response(
@@ -1725,7 +2157,7 @@ async def play_response(
         base_dir = TEMP_AUDIO_DIR.resolve()
 
         candidate: Optional[Path] = None
-        for ext in (".mp3", ".wav"):
+        for ext in (".wav", ".mp3"):
             probe = (base_dir / f"response_{id_norm}{ext}").resolve()
             if probe.parent == base_dir and probe.exists() and probe.stat().st_size > 0:
                 candidate = probe
@@ -1784,6 +2216,32 @@ async def play_response(
     )
 
 
+@app.get("/api/pending-event")
+async def get_pending_event(auth_user: AuthUser = Depends(require_authenticated_user)):
+    """Polls pending Home Assistant background execution results for the user and synthesizes voice."""
+    event = pop_pending_event(auth_user.username)
+    if not event:
+        return JSONResponse(status_code=200, content={"has_event": False}, headers=NO_STORE_HEADERS)
+
+    message_text = str(event.get("message") or "عملیات انجام شد.").strip()
+    audio_url, tts_status = await _prepare_user_audio_response(message_text, auth_user.username)
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "has_event": True,
+            "status": event.get("status", "success"),
+            "message": message_text,
+            "entity_id": event.get("entity_id"),
+            "floor": event.get("floor"),
+            "audio_url": audio_url,
+            "tts_status": tts_status,
+            "timestamp": event.get("timestamp", time.time()),
+        },
+        headers=NO_STORE_HEADERS,
+    )
+
+
 def _resolve_listen_port(host: str, requested_port: int) -> int:
     import socket
 
@@ -1818,4 +2276,4 @@ if __name__ == "__main__":
     chosen_port = _resolve_listen_port(host, requested_port)
     display_host = "localhost" if host in ("0.0.0.0", "::", "") else host
     logger.info(f"Starting Smart Building Voice Gateway at http://{display_host}:{chosen_port}")
-    uvicorn.run("server:app", host=host, port=chosen_port, reload=False)
+    uvicorn.run("app.main:app", host=host, port=chosen_port, reload=False)

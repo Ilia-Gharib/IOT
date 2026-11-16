@@ -142,6 +142,7 @@ def build_error_payload(
     requested_model: Optional[str] = None,
     available_models: Optional[List[str]] = None,
     audio_url: Optional[str] = None,
+    transcript: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Builds a consistent JSON error envelope for all endpoints and exception handlers."""
     payload: Dict[str, Any] = {
@@ -155,6 +156,8 @@ def build_error_payload(
     }
     if audio_url is not None:
         payload["audio_url"] = audio_url
+    if transcript is not None:
+        payload["transcript"] = transcript
     return payload
 
 
@@ -168,6 +171,7 @@ def build_error_response(
     available_models: Optional[List[str]] = None,
     audio_url: Optional[str] = None,
     headers: Optional[Dict[str, str]] = None,
+    transcript: Optional[str] = None,
 ) -> JSONResponse:
     """Returns a FastAPI JSONResponse using the standardized error payload."""
     return JSONResponse(
@@ -180,6 +184,7 @@ def build_error_response(
             requested_model=requested_model,
             available_models=available_models,
             audio_url=audio_url,
+            transcript=transcript,
         ),
         headers=headers,
     )

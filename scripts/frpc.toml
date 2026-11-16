@@ -1,0 +1,20 @@
+# ==============================================================================
+# scripts/frpc.toml - Fast Reverse Proxy (FRP) Client Configuration
+# Optimized for Iran National Network (اینترنت ملی / Intranet)
+# Ultra low-latency (<20ms) connection to Iranian VPS (ArvanCloud / ParsPack)
+# ==============================================================================
+
+serverAddr = "127.0.0.1"        # Change this to your Iran VPS public IP (e.g. 185.x.x.x)
+serverPort = 7000               # Default FRP Server (frps) port
+
+# Authentication Token (match with your frps server config)
+auth.method = "token"
+auth.token = "ava_iot_secret_2026"
+
+# TCP Proxy mapping laptop port 8000 -> Iran VPS port 8000
+[[proxies]]
+name = "ava-iot-voice-gateway"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8000
+remotePort = 8000
