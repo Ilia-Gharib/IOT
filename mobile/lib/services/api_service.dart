@@ -11,8 +11,21 @@ import 'storage_service.dart';
 class ApiService {
   final ConnectionService _conn = ConnectionService();
 
+  Future<String> _getBaseUrlForRequest() async {
+    final mode = await StorageService.getConnectionMode();
+    if (mode == StorageService.modeOffline) {
+      final local = await StorageService.getLocalUrl();
+      return ConnectionService.sanitizeUrl(local.isNotEmpty ? local : ConnectionService.defaultLocalUrl);
+    }
+    if (mode == StorageService.modeOnline) {
+      final remote = await StorageService.getRemoteUrl();
+      return ConnectionService.sanitizeUrl(remote.isNotEmpty ? remote : ConnectionService.defaultRemoteUrl);
+    }
+    return _conn.activeBaseUrl;
+  }
+
   Future<AuthUser> login(String username, String password) async {
-    var baseUrl = _conn.activeBaseUrl;
+    var baseUrl = await _getBaseUrlForRequest();
     try {
       final res = await _loginInternal(baseUrl, username, password);
       _conn.recordSuccess();
@@ -67,7 +80,7 @@ class ApiService {
     required String password,
     required String floorCode,
   }) async {
-    var baseUrl = _conn.activeBaseUrl;
+    var baseUrl = await _getBaseUrlForRequest();
     AuthUser user;
     try {
       user = await _registerInternal(
@@ -172,7 +185,7 @@ class ApiService {
     String token, {
     bool handsFree = false,
   }) async {
-    var baseUrl = _conn.activeBaseUrl;
+    var baseUrl = await _getBaseUrlForRequest();
     try {
       final res = await _processAudioInternal(baseUrl, audioFile, token, handsFree: handsFree);
       _conn.recordSuccess();
@@ -260,7 +273,7 @@ class ApiService {
   }
 
   Future<Uint8List> downloadAudioBytes(String audioUrl, String token) async {
-    var baseUrl = _conn.activeBaseUrl;
+    var baseUrl = await _getBaseUrlForRequest();
     try {
       final res = await _downloadAudioBytesInternal(baseUrl, audioUrl, token);
       _conn.recordSuccess();
@@ -309,7 +322,7 @@ class ApiService {
   }
 
   Future<PendingEventResponse?> checkPendingEvent(String token) async {
-    final baseUrl = _conn.activeBaseUrl;
+    final baseUrl = await _getBaseUrlForRequest();
     final uri = Uri.parse('$baseUrl/api/pending-event');
 
     try {

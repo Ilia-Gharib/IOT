@@ -76,6 +76,18 @@ class ConnectionService {
 
   Future<void> _checkInitialNetwork() async {
     try {
+      final mode = await StorageService.getConnectionMode();
+      if (mode == StorageService.modeOffline) {
+        final localUrl = await StorageService.getLocalUrl();
+        _activeBaseUrl = _cleanUrl(localUrl.isNotEmpty ? localUrl : defaultLocalUrl);
+        final ok = await _pingHealth(_activeBaseUrl, const Duration(seconds: 2));
+        modeNotifier.value = ok ? ConnectionMode.local : ConnectionMode.disconnected;
+        return;
+      }
+      if (mode == StorageService.modeOnline) {
+        await _lockToRemote();
+        return;
+      }
       final results = await Connectivity().checkConnectivity();
       await _handleNetworkChange(results);
     } catch (_) {
@@ -85,6 +97,19 @@ class ConnectionService {
 
   /// مدیریت هوشمند تغییر شبکه بدون ایجاد تاخیر و بدون چشمک زدن
   Future<void> _handleNetworkChange(List<ConnectivityResult> results) async {
+    final mode = await StorageService.getConnectionMode();
+    if (mode == StorageService.modeOffline) {
+      final localUrl = await StorageService.getLocalUrl();
+      _activeBaseUrl = _cleanUrl(localUrl.isNotEmpty ? localUrl : defaultLocalUrl);
+      final ok = await _pingHealth(_activeBaseUrl, const Duration(seconds: 2));
+      modeNotifier.value = ok ? ConnectionMode.local : ConnectionMode.disconnected;
+      return;
+    }
+    if (mode == StorageService.modeOnline) {
+      await _lockToRemote();
+      return;
+    }
+
     final hasWifi = results.contains(ConnectivityResult.wifi);
     final hasVpn = results.contains(ConnectivityResult.vpn);
     final hasEthernet = results.contains(ConnectivityResult.ethernet);
@@ -140,12 +165,17 @@ class ConnectionService {
   Future<String?> refreshRemoteUrlFromDiscovery({
     Duration timeout = const Duration(seconds: 2),
   }) async {
+    final mode = await StorageService.getConnectionMode();
+    if (mode == StorageService.modeOffline) {
+      debugPrint('[ConnectionService] حالت فقط آفلاین فعال است؛ از استعلام دیسکاوری هاست صرف‌نظر شد.');
+      return null;
+    }
     try {
       final updatedUrl = await StorageService.refreshRemoteUrlFromDiscovery(timeout: timeout);
       if (updatedUrl != null && updatedUrl.isNotEmpty) {
         final clean = _cleanUrl(updatedUrl);
         debugPrint('[ConnectionService] دریافت موفق آدرس از دیسکاوری هاست: $clean');
-        if (modeNotifier.value == ConnectionMode.remote || _activeBaseUrl != defaultLocalUrl) {
+        if (modeNotifier.value == ConnectionMode.remote || _activeBaseUrl != defaultLocalUrl || mode == StorageService.modeOnline) {
           _activeBaseUrl = clean;
         }
         return clean;
@@ -156,18 +186,50 @@ class ConnectionService {
     return null;
   }
 
-  /// سوییچ کاملاً دوطرفه (Bidirectional Failover) در صورت خطای شبکه یا SocketException
+  /// سوییچ کاملاً دوطرفه (Bidirectional Failover) با رعایت حالت انتخابی کاربر (Auto / Offline / Online)
   Future<String> handleRequestFailure(String failedUrl) async {
     _consecutiveFailures++;
+    final mode = await StorageService.getConnectionMode();
     final localUrl = await StorageService.getLocalUrl();
     final remoteUrl = await StorageService.getRemoteUrl();
     final cleanFailed = _cleanUrl(failedUrl);
     final cleanLocal = _cleanUrl(localUrl.isNotEmpty ? localUrl : defaultLocalUrl);
     final cleanRemote = _cleanUrl(remoteUrl.isNotEmpty ? remoteUrl : defaultRemoteUrl);
 
+    // ۱. اگر در حالت فقط آفلاین باشد: به هیچ وجه سراغ ریموت یا دیسکاوری نمی‌رود
+    if (mode == StorageService.modeOffline) {
+      debugPrint('[ConnectionService] حالت فقط آفلاین: شکست درخواست محلی ($cleanFailed) -> ماندن منحصراً روی لوکال: $cleanLocal');
+      _activeBaseUrl = cleanLocal;
+      if (_consecutiveFailures >= 2) {
+        modeNotifier.value = ConnectionMode.disconnected;
+      }
+      return _activeBaseUrl;
+    }
+
+    // ۲. اگر در حالت فقط آنلاین باشد: به هیچ وجه سراغ لوکال نمی‌رود و صرفاً دیسکاوری را امتحان می‌کند
+    if (mode == StorageService.modeOnline) {
+      debugPrint('[ConnectionService] حالت فقط آنلاین: شکست درخواست ریموت ($cleanFailed) -> استعلام از دیسکاوری هاست...');
+      try {
+        final discoveredUrl = await refreshRemoteUrlFromDiscovery(timeout: const Duration(seconds: 2));
+        if (discoveredUrl != null && discoveredUrl.isNotEmpty && discoveredUrl != cleanFailed) {
+          _activeBaseUrl = discoveredUrl;
+          modeNotifier.value = ConnectionMode.remote;
+          return _activeBaseUrl;
+        }
+      } catch (e) {
+        debugPrint('[ConnectionService] خطا در استعلام دیسکاوری: $e');
+      }
+      _activeBaseUrl = cleanRemote;
+      if (_consecutiveFailures >= 2) {
+        modeNotifier.value = ConnectionMode.disconnected;
+      }
+      return _activeBaseUrl;
+    }
+
+    // ۳. حالت خودکار (Auto): سوییچ کاملاً هوشمند و دوطرفه
     final isFailedLocal = cleanFailed == cleanLocal;
 
-    // ۱. اگر در حالت محلی بود و درخواست واقعی خطا داد، همان لحظه به کلودفلر سوییچ کن
+    // اگر در حالت محلی بود و درخواست واقعی خطا داد، همان لحظه به کلودفلر سوییچ کن
     if (isFailedLocal) {
       debugPrint('[ConnectionService] شکست درخواست محلی ($cleanFailed) -> سوییچ فوری به کلودفلر: $cleanRemote');
       _activeBaseUrl = cleanRemote;
@@ -175,7 +237,7 @@ class ConnectionService {
       return _activeBaseUrl;
     }
 
-    // ۲. اگر در حالت ریموت (کلودفلر) بود و با خطای شبکه یا SocketException مواجه شد:
+    // اگر در حالت ریموت (کلودفلر) بود و با خطای شبکه مواجه شد:
     debugPrint('[ConnectionService] شکست درخواست ریموت ($cleanFailed) -> استعلام آخرین آدرس از دیسکاوری هاست...');
     try {
       final discoveredUrl = await refreshRemoteUrlFromDiscovery(timeout: const Duration(seconds: 2));
@@ -209,8 +271,61 @@ class ConnectionService {
     _consecutiveFailures = 0;
   }
 
+  /// اعمال صریح حالت اتصال انتخاب شده توسط کاربر (Auto / Offline / Online)
+  Future<void> applyConnectionMode(String mode) async {
+    await StorageService.setConnectionMode(mode);
+    _consecutiveFailures = 0;
+
+    if (mode == StorageService.modeOffline) {
+      final localUrl = await StorageService.getLocalUrl();
+      _activeBaseUrl = _cleanUrl(localUrl.isNotEmpty ? localUrl : defaultLocalUrl);
+      modeNotifier.value = ConnectionMode.local;
+      debugPrint('[ConnectionService] اعمال حالت منحصراً آفلاین: $_activeBaseUrl');
+      unawaited(checkConnection());
+    } else if (mode == StorageService.modeOnline) {
+      final remoteUrl = await StorageService.getRemoteUrl();
+      _activeBaseUrl = _cleanUrl(remoteUrl.isNotEmpty ? remoteUrl : defaultRemoteUrl);
+      modeNotifier.value = ConnectionMode.remote;
+      debugPrint('[ConnectionService] اعمال حالت منحصراً آنلاین: $_activeBaseUrl');
+      unawaited(checkConnection());
+    } else {
+      debugPrint('[ConnectionService] اعمال حالت خودکار (Auto)');
+      await checkConnection();
+    }
+  }
+
   /// بررسی دستی اتصال در صورت نیاز
   Future<bool> checkConnection() async {
+    final mode = await StorageService.getConnectionMode();
+    if (mode == StorageService.modeOffline) {
+      final localUrl = await StorageService.getLocalUrl();
+      final target = localUrl.isNotEmpty ? localUrl : defaultLocalUrl;
+      _activeBaseUrl = _cleanUrl(target);
+      final ok = await _pingHealth(_activeBaseUrl, const Duration(seconds: 2));
+      modeNotifier.value = ok ? ConnectionMode.local : ConnectionMode.disconnected;
+      return ok;
+    }
+
+    if (mode == StorageService.modeOnline) {
+      final remoteUrl = await StorageService.getRemoteUrl();
+      final target = remoteUrl.isNotEmpty ? remoteUrl : defaultRemoteUrl;
+      _activeBaseUrl = _cleanUrl(target);
+      final ok = await _pingHealth(_activeBaseUrl, const Duration(seconds: 4));
+      if (!ok) {
+        final discovered = await refreshRemoteUrlFromDiscovery();
+        if (discovered != null) {
+          final okDisc = await _pingHealth(discovered, const Duration(seconds: 3));
+          if (okDisc) {
+            _activeBaseUrl = discovered;
+            modeNotifier.value = ConnectionMode.remote;
+            return true;
+          }
+        }
+      }
+      modeNotifier.value = ok ? ConnectionMode.remote : ConnectionMode.disconnected;
+      return ok;
+    }
+
     try {
       final results = await Connectivity().checkConnectivity();
       await _handleNetworkChange(results);

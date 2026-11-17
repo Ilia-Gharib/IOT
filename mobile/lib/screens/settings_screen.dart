@@ -17,6 +17,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _remoteUrlController = TextEditingController();
   final _conn = ConnectionService();
 
+  String _connectionMode = StorageService.modeAuto;
   AuthUser? _user;
   bool _isTesting = false;
   String? _testResult;
@@ -33,12 +34,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadSettings() async {
     final local = await StorageService.getLocalUrl();
     final remote = await StorageService.getRemoteUrl();
+    final mode = await StorageService.getConnectionMode();
     final u = await StorageService.getUser();
 
     if (mounted) {
       setState(() {
         _localUrlController.text = local;
         _remoteUrlController.text = remote;
+        _connectionMode = mode;
         _user = u;
       });
     }
@@ -147,6 +150,199 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _setConnectionMode(String newMode) async {
+    if (_connectionMode == newMode) return;
+    setState(() {
+      _connectionMode = newMode;
+    });
+    await _conn.applyConnectionMode(newMode);
+
+    if (!mounted) return;
+
+    String label;
+    switch (newMode) {
+      case StorageService.modeOffline:
+        label = 'فقط آفلاین (هات‌اسپات)';
+        break;
+      case StorageService.modeOnline:
+        label = 'فقط آنلاین (کلودفلر)';
+        break;
+      case StorageService.modeAuto:
+      default:
+        label = 'خودکار (Auto)';
+        break;
+    }
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Directionality(
+          textDirection: TextDirection.rtl,
+          child: Text(
+            'حالت اتصال شبکه روی «$label» تنظیم شد.',
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+          ),
+        ),
+        backgroundColor: const Color(0xFF1E293B),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  String _getModeDescription() {
+    switch (_connectionMode) {
+      case StorageService.modeOffline:
+        return 'حالت فقط آفلاین (Offline): کل سیستم منحصراً روی آدرس هات‌اسپات محلی (192.168.137.1) قفل است و هیچ درخواستی به اینترنت یا کلودفلر ارسال نمی‌شود.';
+      case StorageService.modeOnline:
+        return 'حالت فقط آنلاین (Online): کل سیستم منحصراً روی آدرس کلودفلر قفل است و آدرس هات‌اسپات محلی بررسی یا تست نخواهد شد.';
+      case StorageService.modeAuto:
+      default:
+        return 'حالت خودکار (Auto): سیستم ابتدا هات‌اسپات محلی (192.168.137.1) را تست می‌کند؛ در صورت عدم پاسخ به آدرس کلودفلر سوییچ خواهد کرد.';
+    }
+  }
+
+  Widget _buildModeSelector() {
+    IconData icon;
+    String label;
+    Color color;
+
+    switch (_connectionMode) {
+      case StorageService.modeOffline:
+        icon = Icons.wifi;
+        label = 'آفلاین';
+        color = const Color(0xFFF59E0B); // Amber
+        break;
+      case StorageService.modeOnline:
+        icon = Icons.cloud;
+        label = 'آنلاین';
+        color = const Color(0xFF38BDF8); // Sky Blue
+        break;
+      case StorageService.modeAuto:
+      default:
+        icon = Icons.sync_alt;
+        label = 'اتو';
+        color = const Color(0xFF10B981); // Emerald
+        break;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      child: PopupMenuButton<String>(
+        tooltip: 'انتخاب حالت اتصال شبکه',
+        initialValue: _connectionMode,
+        onSelected: _setConnectionMode,
+        color: const Color(0xFF1E293B),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: const BorderSide(color: Color(0xFF334155)),
+        ),
+        elevation: 8,
+        itemBuilder: (context) => [
+          PopupMenuItem<String>(
+            value: StorageService.modeAuto,
+            child: Directionality(
+              textDirection: TextDirection.rtl,
+              child: Row(
+                children: [
+                  const Icon(Icons.sync_alt, color: Color(0xFF10B981), size: 18),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('حالت خودکار (Auto)', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                        Text('سوییچ هوشمند بین هات‌اسپات و کلودفلر', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10)),
+                      ],
+                    ),
+                  ),
+                  if (_connectionMode == StorageService.modeAuto)
+                    const Icon(Icons.check, color: Color(0xFF10B981), size: 18),
+                ],
+              ),
+            ),
+          ),
+          const PopupMenuDivider(height: 1),
+          PopupMenuItem<String>(
+            value: StorageService.modeOffline,
+            child: Directionality(
+              textDirection: TextDirection.rtl,
+              child: Row(
+                children: [
+                  const Icon(Icons.wifi, color: Color(0xFFF59E0B), size: 18),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('فقط آفلاین (Offline)', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                        Text('منحصراً روی هات‌اسپات 192.168.137.1', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10)),
+                      ],
+                    ),
+                  ),
+                  if (_connectionMode == StorageService.modeOffline)
+                    const Icon(Icons.check, color: Color(0xFFF59E0B), size: 18),
+                ],
+              ),
+            ),
+          ),
+          const PopupMenuDivider(height: 1),
+          PopupMenuItem<String>(
+            value: StorageService.modeOnline,
+            child: Directionality(
+              textDirection: TextDirection.rtl,
+              child: Row(
+                children: [
+                  const Icon(Icons.cloud, color: Color(0xFF38BDF8), size: 18),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('فقط آنلاین (Online)', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                        Text('منحصراً روی آدرس ریموت کلودفلر', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10)),
+                      ],
+                    ),
+                  ),
+                  if (_connectionMode == StorageService.modeOnline)
+                    const Icon(Icons.check, color: Color(0xFF38BDF8), size: 18),
+                ],
+              ),
+            ),
+          ),
+        ],
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.14),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: color.withOpacity(0.5), width: 1.2),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: color, size: 15),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(width: 3),
+              Icon(Icons.arrow_drop_down, color: color, size: 16),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _handleLogout() async {
     await StorageService.clearAuth();
     if (!mounted) return;
@@ -169,6 +365,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
+        actions: [
+          _buildModeSelector(),
+        ],
       ),
       body: Directionality(
         textDirection: TextDirection.rtl,
@@ -247,9 +446,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    const Text(
-                      'سیستم ابتدا هات‌اسپات محلی را تست می‌کند؛ در صورت عدم پاسخ به آدرس کلودفلر سوییچ خواهد کرد.',
-                      style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+                    Text(
+                      _getModeDescription(),
+                      style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11, height: 1.4),
                     ),
                     const SizedBox(height: 16),
 

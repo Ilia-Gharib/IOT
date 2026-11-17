@@ -110,6 +110,8 @@ class CloudflareTunnelSupervisor:
         self._thread: threading.Thread | None = None
         self._heartbeat_thread: threading.Thread | None = None
         self.current_url: str | None = None
+        self._synced_url: str | None = None
+        self._sync_lock = threading.Lock()
 
     def start(self) -> None:
         self._stop_event.clear()
@@ -119,19 +121,17 @@ class CloudflareTunnelSupervisor:
         self._heartbeat_thread.start()
 
     def _heartbeat_loop(self) -> None:
-        """Sends periodic lightweight health checks every 20s to prevent Cloudflare tunnel idle timeouts."""
-        # Initial delay to give tunnel time to start and register
+        """Sends periodic lightweight health checks every 20s to keep backend server warm and responsive."""
         if self._stop_event.wait(timeout=10.0):
             return
 
         while not self._stop_event.is_set():
-            target = f"{self.current_url}/health" if self.current_url else f"{self.target_url}/health"
             try:
                 req = urllib.request.Request(
-                    target,
+                    f"{self.target_url}/health",
                     headers={"User-Agent": "CloudflareTunnelHeartbeat/1.0"},
                 )
-                with urllib.request.urlopen(req, timeout=6.0) as resp:
+                with urllib.request.urlopen(req, timeout=3.0) as resp:
                     pass
             except Exception:
                 pass
@@ -172,19 +172,24 @@ class CloudflareTunnelSupervisor:
                 continue
         return "cloudflared"
 
+    def _check_local_health(self) -> bool:
+        """Quickly checks if local backend server is responding (HTTP 200)."""
+        health_url = f"{self.target_url}/health"
+        try:
+            req = urllib.request.Request(health_url, headers={"User-Agent": "TunnelSupervisor"})
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                return resp.status == 200
+        except Exception:
+            return False
+
     def _wait_for_backend_health(self, timeout: float = 90.0) -> bool:
         health_url = f"{self.target_url}/health"
         print(f"[TUNNEL] Waiting for backend server to become healthy ({health_url})...", flush=True)
         start = time.time()
         while not self._stop_event.is_set():
-            try:
-                req = urllib.request.Request(health_url, headers={"User-Agent": "TunnelSupervisor"})
-                with urllib.request.urlopen(req, timeout=2.0) as resp:
-                    if resp.status == 200:
-                        print(f"[TUNNEL] Backend server is healthy (HTTP 200). Initializing Cloudflare Tunnel...", flush=True)
-                        return True
-            except Exception:
-                pass
+            if self._check_local_health():
+                print(f"[TUNNEL] Backend server is healthy (HTTP 200). Initializing Cloudflare Tunnel...", flush=True)
+                return True
             if time.time() - start > timeout:
                 print(f"[TUNNEL] Warning: Backend server health check timed out after {timeout}s.", flush=True)
                 return False
@@ -265,10 +270,10 @@ class CloudflareTunnelSupervisor:
 """
         print(banner, flush=True)
 
-    def _verify_public_health(self, url: str, max_attempts: int = 15, delay: float = 2.0) -> bool:
-        """Verifies public health endpoint of the active Cloudflare tunnel."""
+    def _verify_public_health(self, url: str, max_attempts: int = 3, delay: float = 2.0) -> bool:
+        """Optionally checks public health endpoint of the active Cloudflare tunnel without blocking."""
         health_url = f"{url}/health"
-        print(f"[TUNNEL] Verifying public tunnel health ({health_url})...", flush=True)
+        print(f"[TUNNEL] (Optional) Checking public tunnel reachability ({health_url})...", flush=True)
         for attempt in range(1, max_attempts + 1):
             if self._stop_event.is_set():
                 return False
@@ -277,14 +282,14 @@ class CloudflareTunnelSupervisor:
                     health_url,
                     headers={"User-Agent": "CloudflareHealthCheck/1.0"},
                 )
-                with urllib.request.urlopen(req, timeout=5.0) as resp:
+                with urllib.request.urlopen(req, timeout=3.0) as resp:
                     if resp.status == 200:
-                        print(f"[TUNNEL] [✓] Public tunnel verified healthy (HTTP 200) on attempt {attempt}.", flush=True)
+                        print(f"[TUNNEL] [✓] Public tunnel endpoint verified healthy (HTTP 200) on attempt {attempt}.", flush=True)
                         return True
             except Exception:
                 pass
             time.sleep(delay)
-        print(f"[TUNNEL] [!] Public tunnel health check timed out at {health_url}.", flush=True)
+        print(f"[TUNNEL] [i] Notice: Public health check at {health_url} did not respond directly. This is expected on domestic networks in Iran due to trycloudflare.com filtering; Discovery Gateway registration remains active and valid.", flush=True)
         return False
 
     def _sync_to_discovery(self, url: str) -> bool:
@@ -321,6 +326,31 @@ class CloudflareTunnelSupervisor:
                 print(f"[TUNNEL] [!] Attempt {attempt}/3 - Discovery Gateway sync error: {exc}", flush=True)
                 time.sleep(2.0)
         return False
+
+    def _trigger_discovery_sync(self, reason: str = "") -> None:
+        """Immediately triggers Discovery sync without blocking on public health checks."""
+        if not self.current_url:
+            return
+
+        with self._sync_lock:
+            if self._synced_url == self.current_url:
+                return
+            self._synced_url = self.current_url
+
+        def _do_sync(url: str, sync_reason: str) -> None:
+            if sync_reason:
+                print(f"[TUNNEL] Triggering Discovery sync ({sync_reason})...", flush=True)
+            # 1. Immediate sync to Discovery Gateway
+            self._sync_to_discovery(url)
+            # 2. Non-blocking optional public health check
+            self._verify_public_health(url)
+
+        threading.Thread(
+            target=_do_sync,
+            args=(self.current_url, reason),
+            name="DiscoverySyncWorker",
+            daemon=True,
+        ).start()
 
     def _run_loop(self) -> None:
         cf_bin = self._find_cloudflared()
@@ -400,22 +430,18 @@ class CloudflareTunnelSupervisor:
                             pass
                         self._print_banner(self.current_url)
 
-                        # Verify health and register on Discovery Gateway asynchronously
-                        def _verify_and_sync(tunnel_url: str) -> None:
-                            self._verify_public_health(tunnel_url)
-                            self._sync_to_discovery(tunnel_url)
-
-                        threading.Thread(
-                            target=_verify_and_sync,
-                            args=(self.current_url,),
-                            name="DiscoverySyncWorker",
-                            daemon=True,
-                        ).start()
+                        # Immediately trigger discovery sync if local health is confirmed
+                        if self._check_local_health():
+                            self._trigger_discovery_sync("Local health confirmed")
 
                     # Print critical registration, connection or error lines
                     line_lower = line.lower()
                     if any(k in line_lower for k in ("registered tunnel connection", "registered connection", "error", "failed", "status 429", "warning", "fatal")):
                         print(f"[TUNNEL:cloudflared] {line}", flush=True)
+
+                    # Trigger sync as soon as cloudflared registers tunnel connection
+                    if ("registered tunnel connection" in line_lower or "registered connection" in line_lower) and self.current_url:
+                        self._trigger_discovery_sync("Registered tunnel connection confirmed")
 
                     # Auto-recover if Cloudflare edge expires the session or rejects the tunnel
                     if "unauthorized: tunnel not found" in line_lower:

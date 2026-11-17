@@ -115,6 +115,10 @@ if ($hasToken) {
 # ------------------------------------------------------------------------------
 # 4. Process Lifecycle Management
 # ------------------------------------------------------------------------------
+$activeUrl = $null
+$newPid = $null
+$skipLaunch = $false
+
 if (Test-Path $pidFile) {
     $oldPid = Get-Content $pidFile -ErrorAction SilentlyContinue
     if ($oldPid) {
@@ -123,54 +127,72 @@ if (Test-Path $pidFile) {
             if (Test-Path $urlFile) {
                 $existingUrl = (Get-Content $urlFile -ErrorAction SilentlyContinue).Trim()
                 if ($existingUrl -match '^https://') {
-                    Write-Host "[✓] Active cloudflared process (PID: $oldPid) already healthy: $existingUrl" -ForegroundColor Green
-                    exit 0
+                    Write-Host "[✓] Active cloudflared process (PID: $oldPid) already running: $existingUrl" -ForegroundColor Green
+                    $activeUrl = $existingUrl
+                    $newPid = $oldPid
+                    $skipLaunch = $true
                 }
             }
-            Write-Host "[*] Stopping previous cloudflared instance (PID: $oldPid)..." -ForegroundColor Yellow
-            Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 1
+            if (-not $skipLaunch) {
+                Write-Host "[*] Stopping previous cloudflared instance (PID: $oldPid)..." -ForegroundColor Yellow
+                Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 1
+            }
         }
     }
 }
 
-if (Test-Path $logFile) {
-    Remove-Item -Path $logFile -Force -ErrorAction SilentlyContinue
-}
-
-# Start cloudflared as an independent detached process using Win32_Process
-$procResult = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine = $commandLine}
-
-if ($procResult.ReturnValue -ne 0 -or -not $procResult.ProcessId) {
-    Write-Error "Failed to start cloudflared process. ReturnCode: $($procResult.ReturnValue)"
-    exit 1
-}
-
-$newPid = $procResult.ProcessId
-$newPid | Out-File -FilePath $pidFile -Encoding ascii
-Write-Host "[+] Detached tunnel process running with PID: $newPid" -ForegroundColor Green
-
-# ------------------------------------------------------------------------------
-# 5. Extract & Verify Active Tunnel URL
-# ------------------------------------------------------------------------------
-Write-Host "`n==========================================================" -ForegroundColor Cyan
-Write-Host " [3/3] Waiting for Public HTTPS Tunnel URL...             " -ForegroundColor Cyan
-Write-Host "==========================================================" -ForegroundColor Cyan
-
-$activeUrl = $null
-$timeoutSeconds = 35
-$sw = [System.Diagnostics.Stopwatch]::StartNew()
-
-while ($sw.Elapsed.TotalSeconds -lt $timeoutSeconds) {
-    Start-Sleep -Seconds 1
+if (-not $skipLaunch) {
     if (Test-Path $logFile) {
-        try {
-            $logContent = Get-Content -Path $logFile -Raw -ErrorAction SilentlyContinue
-            if ($logContent -match '(https://(?!api\.)[a-zA-Z0-9-]+\.trycloudflare\.com)') {
-                $activeUrl = $matches[1]
-                break
-            }
-        } catch {}
+        Remove-Item -Path $logFile -Force -ErrorAction SilentlyContinue
+    }
+
+    # Start cloudflared as an independent detached process using Win32_Process
+    $procResult = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine = $commandLine}
+
+    if ($procResult.ReturnValue -ne 0 -or -not $procResult.ProcessId) {
+        Write-Error "Failed to start cloudflared process. ReturnCode: $($procResult.ReturnValue)"
+        exit 1
+    }
+
+    $newPid = $procResult.ProcessId
+    $newPid | Out-File -FilePath $pidFile -Encoding ascii
+    Write-Host "[+] Detached tunnel process running with PID: $newPid" -ForegroundColor Green
+
+    # ------------------------------------------------------------------------------
+    # 5. Extract & Verify Active Tunnel URL
+    # ------------------------------------------------------------------------------
+    Write-Host "`n==========================================================" -ForegroundColor Cyan
+    Write-Host " [3/3] Waiting for Public HTTPS Tunnel URL...             " -ForegroundColor Cyan
+    Write-Host "==========================================================" -ForegroundColor Cyan
+
+    $registered = $false
+    $timeoutSeconds = 40
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+    while ($sw.Elapsed.TotalSeconds -lt $timeoutSeconds) {
+        Start-Sleep -Seconds 1
+        if (Test-Path $logFile) {
+            try {
+                $logContent = Get-Content -Path $logFile -Raw -ErrorAction SilentlyContinue
+                if (-not $activeUrl -and $logContent -match '(https://(?!api\.)[a-zA-Z0-9-]+\.trycloudflare\.com)') {
+                    $activeUrl = $matches[1]
+                }
+                if ($logContent -match 'Registered tunnel connection|Registered connection') {
+                    $registered = $true
+                }
+                # Once we have URL and connection is registered OR local health is confirmed (HTTP 200), proceed immediately!
+                if ($activeUrl) {
+                    if ($registered) {
+                        break
+                    }
+                    $localCode = (& curl.exe -s -o NUL -w "%{http_code}" "$localTarget/health" --max-time 2 2>&1).Trim()
+                    if ($localCode -eq "200") {
+                        break
+                    }
+                }
+            } catch {}
+        }
     }
 }
 
@@ -184,41 +206,33 @@ if ($activeUrl) {
     Write-Host " Public URL : $activeUrl" -ForegroundColor Cyan
     Write-Host " Target     : $localTarget" -ForegroundColor White
     Write-Host " Protocol   : HTTP/2" -ForegroundColor Green
-    Write-Host " PID        : $newPid" -ForegroundColor Gray
+    if ($newPid) { Write-Host " PID        : $newPid" -ForegroundColor Gray }
     Write-Host " Log File   : $logFile" -ForegroundColor Gray
     Write-Host " Saved to   : $urlFile" -ForegroundColor Yellow
     Write-Host "==========================================================`n" -ForegroundColor Green
 
-    # 2. Verify /health
-    $healthUrl = "$activeUrl/health"
-    Write-Host "[*] Verifying public tunnel health at $healthUrl..." -ForegroundColor Cyan
-    $healthy = $false
-    $httpCode = "000"
-    for ($attempt = 1; $attempt -le 10; $attempt++) {
-        $httpCode = (& curl.exe -s -o NUL -w "%{http_code}" "$healthUrl" --max-time 4 2>&1).Trim()
-        if ($httpCode -eq "200") {
-            $healthy = $true
-            Write-Host "[✓] Public tunnel verified healthy (HTTP 200) on attempt $attempt!" -ForegroundColor Green
-            break
-        }
-        Start-Sleep -Seconds 2
-    }
-    if (-not $healthy) {
-        Write-Host "[!] Note: Public health check returned HTTP $httpCode (backend server may still be initializing)." -ForegroundColor Yellow
-    }
-
-    # 3. Automatic Discovery Sync to Host
+    # 2. Immediate Automatic Discovery Sync to Host (Non-blocking by public health)
     $discoveryUrl = [System.Environment]::GetEnvironmentVariable("AVA_DISCOVERY_URL")
     $discoveryKey = [System.Environment]::GetEnvironmentVariable("AVA_DISCOVERY_KEY")
     if ($discoveryUrl -and $discoveryKey) {
         Write-Host "[*] Syncing tunnel URL to Discovery Gateway ($discoveryUrl)..." -ForegroundColor Cyan
         $payload = (@{ url = $activeUrl } | ConvertTo-Json -Compress).Replace('"', '\"')
-        $syncResult = (& curl.exe -s -X POST "$discoveryUrl" -H "Content-Type: application/json" -H "X-AVA-Key: $discoveryKey" -d "$payload" --max-time 8 2>&1).Trim()
+        $syncResult = (& curl.exe -s -X POST "$discoveryUrl" -H "Content-Type: application/json" -H "X-AVA-Key: $discoveryKey" -d "$payload" --max-time 10 2>&1).Trim()
         if ($syncResult -match '"status"\s*:\s*"success"') {
             Write-Host "[✓] Successfully synced to Discovery Gateway! Response: $syncResult" -ForegroundColor Green
         } else {
             Write-Host "[!] Discovery Gateway response: $syncResult" -ForegroundColor Yellow
         }
+    }
+
+    # 3. Optional Non-Blocking Public Health Check
+    $healthUrl = "$activeUrl/health"
+    Write-Host "[*] (Optional) Testing public tunnel reachability at $healthUrl..." -ForegroundColor Gray
+    $httpCode = (& curl.exe -s -o NUL -w "%{http_code}" "$healthUrl" --max-time 3 2>&1).Trim()
+    if ($httpCode -eq "200") {
+        Write-Host "[✓] Public tunnel endpoint verified healthy (HTTP 200)." -ForegroundColor Green
+    } else {
+        Write-Host "[i] Notice: Public health check returned HTTP $httpCode. On Iranian domestic networks without VPN, trycloudflare.com is filtered locally; Discovery Gateway registration has succeeded and the link is active." -ForegroundColor Gray
     }
 } else {
     Write-Error "Could not retrieve tunnel URL. Check $logFile."

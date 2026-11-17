@@ -12,6 +12,11 @@ class StorageService {
   static const String _keyLastUsername = 'last_username';
   static const String _keyUserFloor = 'user_floor';
   static const String _keyHandsFree = 'hands_free_enabled';
+  static const String _keyConnectionMode = 'network_connection_mode';
+
+  static const String modeAuto = 'auto';
+  static const String modeOffline = 'offline';
+  static const String modeOnline = 'online';
 
   static const String defaultLocalUrl = 'http://192.168.137.1:8000';
   static const String defaultRemoteUrl = 'https://fossil-walker-leaf-authentic.trycloudflare.com';
@@ -57,6 +62,21 @@ class StorageService {
   static Future<void> setDiscoveryUrl(String url) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyDiscoveryUrl, url.trim());
+  }
+
+  static Future<String> getConnectionMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final mode = prefs.getString(_keyConnectionMode);
+    if (mode == modeOffline || mode == modeOnline) {
+      return mode!;
+    }
+    return modeAuto;
+  }
+
+  static Future<void> setConnectionMode(String mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    final clean = (mode == modeOffline || mode == modeOnline) ? mode : modeAuto;
+    await prefs.setString(_keyConnectionMode, clean);
   }
 
   /// دریافت خودکار و سریع آدرس کلودفلر از اندپوینت دیسکاوری هاست (با مهلت ۲ ثانیه) و ذخیره آن
